@@ -115,3 +115,26 @@ gunzip -c out/openwrt/openwrt-*-bananapi_bpi-r3-sdcard.img.gz | sudo dd of=/dev/
 
 Gạt switch boot sang SD, cắm mạng vào cổng LAN, truy cập `http://192.168.1.1` (LuCI, user `root`, chưa có mật khẩu).
 Từ image SD, U-Boot của OpenWrt có menu để cài OpenWrt sang NAND/eMMC.
+
+## 7. App điện thoại (Android + iOS)
+
+App Flutter trong `app/`, điều khiển "BPI-R3 Server" (tổng quan, camera, Wi-Fi, LAN, nhạc, truy cập web, LED, log, hệ thống).
+
+- **Android**: cài `out/app/bpir3-arm64.apk` (bật "Cài ứng dụng không rõ nguồn gốc").
+- Mở app → nhập **link công khai** (trycloudflare) và/hoặc **địa chỉ trong mạng** (vd `192.168.2.1:8080`).
+  Ở nhà app dùng địa chỉ trong mạng trước (không cần mật khẩu); ra ngoài dùng link công khai + mật khẩu.
+  App tự nhớ link công khai mới nhất mỗi lần kết nối được.
+
+Build lại (cần Flutter ≥ 3.50, Android SDK):
+
+```bash
+cd app && flutter build apk --release --split-per-abi --target-platform android-arm64
+```
+
+**iOS** (cần máy Mac có Xcode, tài khoản Apple để cài lên iPhone):
+
+```bash
+cd app && flutter build ios --release
+```
+
+Hoặc mở `app/ios/Runner.xcworkspace` bằng Xcode, chọn Team ký app rồi bấm Run với iPhone đang cắm.
