@@ -1,0 +1,1214 @@
+<!doctype html>
+<html lang="vi">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>BPI-R3 Server</title>
+<style>
+  :root {
+    --bg: #f4f5f7; --card: #fff; --text: #1d1f23; --muted: #6b7280; --line: #e5e7eb;
+    --accent: #2563eb; --accent-text: #fff; --ok: #15803d; --warn: #b45309; --bad: #b91c1c;
+    --code: #0f172a; --code-text: #e2e8f0;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #0f1115; --card: #1a1d23; --text: #e5e7eb; --muted: #9ca3af; --line: #2a2f38;
+      --accent: #3b82f6; --ok: #22c55e; --warn: #f59e0b; --bad: #f87171; --code: #0b0d10;
+    }
+  }
+  * { box-sizing: border-box; }
+  body { font-family: system-ui, -apple-system, "Segoe UI", sans-serif; background: var(--bg); color: var(--text);
+         margin: 0; padding: 16px; }
+  main { max-width: 960px; margin: 0 auto; }
+  header { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: 16px; }
+  h1 { font-size: 1.35rem; margin: 0; }
+  h2 { font-size: 1rem; margin: 0 0 12px; }
+  .badge { font-size: .75rem; padding: 3px 9px; border-radius: 999px; background: var(--line); color: var(--muted); }
+  .badge.local { background: color-mix(in srgb, var(--ok) 18%, transparent); color: var(--ok); }
+  .badge.public { background: color-mix(in srgb, var(--warn) 18%, transparent); color: var(--warn); }
+  .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 12px; margin-bottom: 12px; }
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 14px; }
+  .section { margin-bottom: 12px; }
+  .label { font-size: .78rem; color: var(--muted); }
+  .value { font-size: 1.4rem; font-weight: 600; margin-top: 4px; font-variant-numeric: tabular-nums; }
+  .row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+  button { font: inherit; font-size: .9rem; padding: 8px 14px; border-radius: 8px; border: 1px solid var(--line);
+           background: var(--card); color: var(--text); cursor: pointer; }
+  button:hover:not(:disabled) { border-color: var(--accent); }
+  button.primary { background: var(--accent); color: var(--accent-text); border-color: var(--accent); }
+  button.danger { color: var(--bad); }
+  button.active { background: var(--accent); color: var(--accent-text); border-color: var(--accent); }
+  button:disabled { opacity: .45; cursor: not-allowed; }
+  .url { font-family: ui-monospace, Consolas, monospace; font-size: .9rem; word-break: break-all; padding: 8px 10px;
+         background: var(--bg); border-radius: 8px; flex: 1 1 260px; }
+  table { width: 100%; border-collapse: collapse; font-size: .88rem; }
+  th, td { text-align: left; padding: 7px 6px; border-bottom: 1px solid var(--line); }
+  th { color: var(--muted); font-weight: 500; font-size: .78rem; }
+  td.num { font-variant-numeric: tabular-nums; }
+  .table-wrap { overflow-x: auto; }
+  pre { background: var(--code); color: var(--code-text); padding: 12px; border-radius: 8px; font-size: .78rem;
+        max-height: 340px; overflow: auto; white-space: pre-wrap; word-break: break-all; margin: 10px 0 0; }
+  .note { font-size: .85rem; color: var(--muted); margin: 8px 0 0; }
+  .locked .local-only { display: none; }
+  .lock-msg { display: none; }
+  .locked .lock-msg { display: block; }
+  .led-dot { width: 12px; height: 12px; border-radius: 50%; background: var(--line); display: inline-block; }
+  .led-dot.on { background: #3b82f6; box-shadow: 0 0 8px #3b82f6; }
+  .led-dot.blink { animation: blink .6s steps(1) infinite; }
+  .led-dot.heartbeat { animation: blink 1.2s ease-in-out infinite; }
+  @keyframes blink { 0%,49% { background: #3b82f6; box-shadow: 0 0 8px #3b82f6; } 50%,100% { background: var(--line); box-shadow: none; } }
+  #toast { position: fixed; left: 50%; bottom: 20px; transform: translateX(-50%); background: var(--text); color: var(--bg);
+           padding: 10px 16px; border-radius: 8px; font-size: .9rem; opacity: 0; transition: opacity .2s; pointer-events: none;
+           max-width: calc(100% - 32px); }
+  #toast.show { opacity: 1; }
+  #offline { display: none; color: var(--bad); margin-bottom: 12px; }
+  .wan { display: flex; gap: 14px; flex-wrap: wrap; align-items: center; padding: 10px 12px; border-radius: 10px;
+         background: var(--bg); margin-bottom: 10px; }
+  .wan b { font-size: 1.05rem; }
+  .dot { width: 10px; height: 10px; border-radius: 50%; background: var(--bad); display: inline-block; }
+  .dot.ok { background: var(--ok); }
+  .nets { display: flex; flex-direction: column; gap: 6px; margin-top: 10px; }
+  .net { display: flex; align-items: center; gap: 10px; padding: 10px 12px; border: 1px solid var(--line);
+         border-radius: 10px; background: var(--card); color: var(--text); text-align: left; width: 100%; }
+  .net:hover:not(:disabled) { border-color: var(--accent); }
+  .net .name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 500; }
+  .net .meta { font-size: .78rem; color: var(--muted); white-space: nowrap; }
+  .tag { font-size: .72rem; padding: 2px 7px; border-radius: 999px; background: var(--line); color: var(--muted); white-space: nowrap; }
+  .tag.cur { background: color-mix(in srgb, var(--ok) 18%, transparent); color: var(--ok); }
+  .bars { display: inline-flex; align-items: flex-end; gap: 2px; height: 14px; }
+  .bars i { width: 4px; background: var(--line); border-radius: 1px; }
+  .bars i.on { background: var(--accent); }
+  .tabs { position: sticky; top: 0; z-index: 5; display: flex; gap: 4px; overflow-x: auto; scrollbar-width: none;
+          background: var(--bg); padding: 6px 0 10px; margin-bottom: 4px; border-bottom: 1px solid var(--line); }
+  .tabs::-webkit-scrollbar { display: none; }
+  .tabs button { flex: 0 0 auto; border: none; background: transparent; color: var(--muted); padding: 8px 14px;
+                 border-radius: 8px; font-weight: 500; }
+  .tabs button:hover { background: var(--card); border: none; color: var(--text); }
+  .tabs button.on { background: var(--card); color: var(--accent); box-shadow: 0 1px 3px rgba(0,0,0,.08); }
+  .tab { display: none; padding-top: 8px; }
+  .tab.on { display: block; }
+  .cam { position: relative; background: #000; border-radius: 10px; overflow: hidden; aspect-ratio: 4 / 3;
+         max-height: 70vh; margin: 0 auto; }
+  .cam img { width: 100%; height: 100%; object-fit: contain; display: block; }
+  .cam:fullscreen { max-height: none; border-radius: 0; }
+  .cam-osd { position: absolute; color: #fff; font: 600 .85rem ui-monospace, Consolas, monospace;
+             text-shadow: 0 1px 3px #000; background: rgba(0,0,0,.35); padding: 3px 8px; border-radius: 6px; }
+  .cam-tl { top: 10px; left: 10px; } .cam-tr { top: 10px; right: 10px; } .cam-bl { bottom: 10px; left: 10px; font-size: 1rem; }
+  .cam-canvas { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; }
+  .chk { display: flex; gap: 6px; align-items: center; font-size: .88rem; margin-top: 6px; cursor: pointer; }
+  .rec { color: #ef4444; animation: blink 1s steps(1) infinite; }
+  .cam-msg { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
+             color: #ddd; font-size: .95rem; text-align: center; padding: 16px; }
+  .login { min-height: 100vh; display: flex; align-items: center; justify-content: center; padding: 16px; }
+  .login-card { width: min(360px, 100%); }
+  .inp { width: 100%; font: inherit; padding: 8px 10px; border-radius: 8px; border: 1px solid var(--line);
+         background: var(--bg); color: var(--text); margin-top: 4px; }
+  dialog { border: 1px solid var(--line); border-radius: 14px; background: var(--card); color: var(--text);
+           padding: 18px; width: min(380px, calc(100% - 32px)); }
+  dialog::backdrop { background: rgba(0,0,0,.45); }
+  dialog label { display: block; font-size: .82rem; color: var(--muted); margin: 10px 0 4px; }
+  dialog input, dialog select { width: 100%; font: inherit; padding: 9px 10px; border-radius: 8px;
+           border: 1px solid var(--line); background: var(--bg); color: var(--text); }
+  #player { position: fixed; left: 0; right: 0; bottom: 0; z-index: 20; display: flex; align-items: center; gap: 12px;
+            padding: 10px 16px; background: var(--card); border-top: 1px solid var(--line);
+            box-shadow: 0 -2px 10px rgba(0,0,0,.08); }
+  body.playing { padding-bottom: 96px; }
+  #pCover { width: 52px; height: 52px; border-radius: 8px; object-fit: cover; background: var(--line); flex: 0 0 auto; }
+  .p-main { flex: 1; min-width: 0; }
+  .p-title { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; margin-bottom: 2px; }
+  .p-btns { display: flex; gap: 4px; flex: 0 0 auto; }
+  .p-btns button { padding: 8px 10px; }
+  .p-vol { display: flex; align-items: center; gap: 4px; flex: 0 0 auto; }
+  #pOut { font-size: .72rem; }
+  .p-btns button.on { border-color: var(--accent); color: var(--accent); }
+  @media (max-width: 600px) {
+    .p-vol { width: 100%; justify-content: center; }
+    #player { flex-wrap: wrap; gap: 8px; padding: 8px 12px; }
+    #pCover { width: 40px; height: 40px; }
+    .p-btns { width: 100%; justify-content: center; }
+    body.playing { padding-bottom: 130px; }
+  }
+  .track.playing { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 8%, var(--card)); }
+  .track .cov { width: 36px; height: 36px; border-radius: 6px; object-fit: cover; background: var(--line);
+                flex: 0 0 auto; display: flex; align-items: center; justify-content: center; font-size: 1.1rem; }
+  #mDrop.drag { outline: 2px dashed var(--accent); outline-offset: -6px; }
+  tr.sel td { background: color-mix(in srgb, var(--accent) 10%, transparent); }
+  .progress { padding: 10px 12px; border-radius: 10px; margin-top: 10px; font-size: .9rem; display: none; }
+  .progress.running { display: block; background: color-mix(in srgb, var(--accent) 14%, transparent); }
+  .progress.ok { display: block; background: color-mix(in srgb, var(--ok) 16%, transparent); color: var(--ok); }
+  .progress.failed { display: block; background: color-mix(in srgb, var(--bad) 14%, transparent); color: var(--bad); }
+</style>
+</head>
+<body>
+<!-- Màn hình đăng nhập (chỉ hiện khi vào qua link công khai mà chưa đăng nhập) -->
+<div id="loginScreen" class="login" style="display:none">
+  <form class="card login-card" onsubmit="event.preventDefault(); doLogin()">
+    <h1 style="margin:0 0 4px">🔒 BPI-R3</h1>
+    <p class="note" style="margin:0 0 14px" id="loginNote">Nhập mật khẩu để vào bảng điều khiển.</p>
+    <input id="loginPw" class="inp" type="password" placeholder="Mật khẩu" autocomplete="current-password" required>
+    <button class="primary" type="submit" id="btnLogin" style="width:100%;margin-top:12px">Đăng nhập</button>
+    <p class="note" id="loginErr" style="color:var(--bad)"></p>
+  </form>
+</div>
+
+<main id="app" class="locked" style="display:none">
+  <header>
+    <h1>BPI-R3 — <span id="host">…</span></h1>
+    <span id="who" class="badge">đang kiểm tra…</span>
+    <button id="btnLogout" onclick="doLogout()" style="display:none;margin-left:auto">Đăng xuất</button>
+  </header>
+
+  <nav class="tabs" id="tabs">
+    <button data-tab="overview">📊 Tổng quan</button>
+    <button data-tab="camera">📷 Camera</button>
+    <button data-tab="wifi" class="local-only">📶 Wi-Fi Internet</button>
+    <button data-tab="lan" class="local-only">🖧 Mạng LAN</button>
+    <button data-tab="music" class="local-only">🎵 Nhạc</button>
+    <button data-tab="traffic" class="local-only">🌐 Truy cập</button>
+    <button data-tab="device" class="local-only">💡 Điều khiển</button>
+    <button data-tab="log" class="local-only">📜 Log</button>
+    <button data-tab="system" class="local-only">⚙️ Hệ thống</button>
+  </nav>
+
+  <div id="offline">Mất kết nối tới board. Đang thử lại…</div>
+
+  <!-- ================= Tổng quan ================= -->
+  <section class="tab" data-tab="overview">
+    <div class="grid">
+      <div class="card"><div class="label">Nhiệt độ CPU</div><div class="value" id="temp">…</div></div>
+      <div class="card"><div class="label">Tải CPU (1/5/15 phút)</div><div class="value" id="load" style="font-size:1.1rem">…</div></div>
+      <div class="card"><div class="label">RAM trống</div><div class="value" id="mem" style="font-size:1.1rem">…</div></div>
+      <div class="card"><div class="label">Máy đang bắt Wi-Fi</div><div class="value" id="wifi">…</div></div>
+      <div class="card"><div class="label">Đã chạy</div><div class="value" id="up" style="font-size:1.1rem">…</div></div>
+      <div class="card"><div class="label">Nhiệt chip Wi-Fi</div><div class="value" id="wtemp" style="font-size:1.1rem">…</div></div>
+    </div>
+
+    <div class="card section">
+      <h2>Link công khai (Internet)</h2>
+      <div class="row">
+        <div class="url" id="purl">…</div>
+        <button onclick="copyUrl()">Sao chép</button>
+        <button onclick="openUrl()">Mở</button>
+        <button class="local-only" id="btnNewLink" onclick="newLink()">Tạo link mới</button>
+        <a href="/cgi-bin/luci/" target="_blank" rel="noopener" class="local-only"><button>⚙️ LuCI</button></a>
+      </div>
+      <p class="note">Mở link này từ bất cứ đâu, đăng nhập bằng mật khẩu trong tab Hệ thống để dùng mọi chức năng.</p>
+      <div id="sshBox" style="display:none;margin-top:12px">
+        <div class="label">SSH từ xa (chỉ đăng nhập bằng khóa)</div>
+        <div class="row" style="margin-top:4px">
+          <div class="url" id="sshCmd">…</div>
+          <button onclick="copySsh()">Sao chép</button>
+        </div>
+        <p class="note">Máy SSH cần cài <code>cloudflared</code> và khóa SSH đã thêm vào board. Trên Windows dùng
+          <code>server\ssh-remote.ps1</code>. Hostname đổi mỗi lần board khởi động lại.</p>
+      </div>
+    </div>
+
+    <p class="card lock-msg">🔒 Bạn đang xem qua Internet nên chỉ được xem. Muốn điều khiển board, hãy bắt Wi-Fi
+      <b>BPI-R3</b> hoặc Wi-Fi nhà rồi mở trang này bằng địa chỉ trong mạng.</p>
+  </section>
+
+  <!-- ================= Camera ================= -->
+  <section class="tab" data-tab="camera">
+    <div class="card section">
+      <div class="cam" id="camBox">
+        <img id="camImg" alt="Camera">
+        <canvas id="camCanvas" class="cam-canvas"></canvas>
+        <div class="cam-osd cam-tl"><span class="rec">●</span> LIVE · CAM-01</div>
+        <div class="cam-osd cam-tr" id="camClock">--:--:--</div>
+        <div class="cam-osd cam-bl" id="camCount" style="display:none">👤 0 người</div>
+        <div class="cam-msg" id="camMsg">Đang kết nối camera…</div>
+      </div>
+      <div class="grid" style="margin:10px 0 0">
+        <div class="card"><div class="label">Đang thấy</div><div class="value" id="vNow">–</div></div>
+        <div class="card"><div class="label">Tổng lượt người</div><div class="value" id="vTotal">–</div></div>
+        <div class="card"><div class="label">Xử lý trên board</div><div class="value" id="vMs" style="font-size:1.1rem">–</div></div>
+        <div class="card"><div class="label">Hiển thị</div>
+          <label class="chk"><input type="checkbox" id="vBoxes" checked> Khung + ID</label>
+          <label class="chk"><input type="checkbox" id="vTrails" checked> Vệt đường đi</label></div>
+      </div>
+      <div class="row" style="margin-top:10px">
+        <button onclick="camSnapshot()">📸 Chụp ảnh</button>
+        <button onclick="camFull()">⛶ Toàn màn hình</button>
+        <button onclick="camCopy()">🔗 Sao chép link stream</button>
+        <span class="note" id="camInfo" style="margin:0"></span>
+      </div>
+      <p class="note">Camera giả lập: phát lặp video mẫu <code>vtest.avi</code> (người đi bộ, 768×576, 10 khung/giây)
+        dưới dạng stream MJPEG. Link stream mở được bằng trình duyệt, VLC, Home Assistant, Frigate…
+        như camera IP thật.<br>
+        Nhận dạng người: board trừ nền + gom vùng chuyển động + tracking (numpy, ~11 ms/khung), rồi gửi tọa độ qua
+        <code>/api/vision/stream</code> để trang vẽ khung. Người đi sát nhau có thể bị gộp làm một.</p>
+    </div>
+  </section>
+
+  <!-- ================= Wi-Fi Internet ================= -->
+  <section class="tab local-only" data-tab="wifi">
+    <div class="card section">
+      <div class="row" style="justify-content:space-between;margin-bottom:10px">
+        <h2 style="margin:0">Board đang bắt mạng nào để lấy Internet</h2>
+        <div class="row">
+          <button onclick="openHidden()">Mạng ẩn…</button>
+          <button class="primary" id="btnScan" onclick="scanWifi()">Quét Wi-Fi</button>
+        </div>
+      </div>
+      <div class="wan" id="wan">…</div>
+      <div class="progress" id="wifiProgress"></div>
+      <div class="nets" id="nets"></div>
+      <p class="note">Bấm vào một mạng để kết nối. Nếu sai mật khẩu, board tự quay về mạng cũ. Khi đổi mạng,
+        Wi-Fi BPI-R3 sẽ rớt vài giây, trang sẽ tự kết nối lại.</p>
+    </div>
+  </section>
+
+  <!-- ================= Mạng LAN ================= -->
+  <section class="tab local-only" data-tab="lan">
+    <div class="card section">
+      <h2>IP và dải mạng của board</h2>
+      <div class="wan" id="lanNow">…</div>
+      <div class="grid" style="grid-template-columns:repeat(auto-fit,minmax(150px,1fr));margin:0">
+        <div><div class="label">IP của board</div><input id="lanIp" class="inp" placeholder="192.168.2.1"></div>
+        <div><div class="label">Dải mạng (subnet)</div>
+          <select id="lanPrefix" class="inp">
+            <option value="24">/24 — 255.255.255.0 (254 máy)</option>
+            <option value="23">/23 — 255.255.254.0 (510 máy)</option>
+            <option value="22">/22 — 255.255.252.0 (1022 máy)</option>
+            <option value="20">/20 — 255.255.240.0 (4094 máy)</option>
+            <option value="16">/16 — 255.255.0.0 (65534 máy)</option>
+            <option value="25">/25 — 255.255.255.128 (126 máy)</option>
+            <option value="26">/26 — 255.255.255.192 (62 máy)</option>
+          </select></div>
+        <div><div class="label">DHCP bắt đầu từ (số thứ tự)</div><input id="lanStart" class="inp" type="number" min="1"></div>
+        <div><div class="label">Số máy DHCP tối đa</div><input id="lanLimit" class="inp" type="number" min="1"></div>
+      </div>
+      <p class="note" id="lanPreview"></p>
+      <div class="row">
+        <button class="primary" id="btnLan" onclick="applyLan()">Áp dụng</button>
+        <span class="note" id="lanHint" style="margin:0"></span>
+      </div>
+      <div class="progress" id="lanProgress"></div>
+    </div>
+
+    <div class="card section">
+      <div class="row" style="justify-content:space-between;margin-bottom:8px">
+        <h2 style="margin:0">Máy đang bắt Wi-Fi của board</h2>
+        <button onclick="loadClients()">Làm mới</button>
+      </div>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Tên</th><th>IP</th><th>Băng tần</th><th>Sóng</th><th>Đã kết nối</th><th>MAC</th></tr></thead>
+          <tbody id="clients"><tr><td colspan="6">…</td></tr></tbody>
+        </table>
+      </div>
+    </div>
+  </section>
+
+  <!-- ================= Nhạc ================= -->
+  <section class="tab local-only" data-tab="music">
+    <div class="card section" id="mDrop">
+      <div class="row" style="justify-content:space-between;margin-bottom:10px">
+        <h2 style="margin:0">Thư viện nhạc <span class="note" id="mInfo"></span></h2>
+        <div class="row">
+          <label class="primary" style="display:inline-block;padding:8px 14px;border-radius:8px;cursor:pointer;background:var(--accent);color:var(--accent-text)">
+            ⬆ Tải nhạc lên<input type="file" id="mFile" accept="audio/*,.mp3,.m4a,.flac,.ogg,.opus,.wav" multiple hidden onchange="mUpload(this.files)">
+          </label>
+          <button onclick="loadMusic()">↻</button>
+        </div>
+      </div>
+      <div class="row" style="margin-bottom:10px">
+        <span class="label">Phát ở:</span>
+        <div class="row" id="mOutBtns" style="gap:4px">
+          <button data-out="local" onclick="mSetOut('local')">📱 Máy này</button>
+          <button data-out="board" onclick="mSetOut('board')">🔊 Loa board</button>
+        </div>
+        <span class="note" id="mOutNote" style="margin:0"></span>
+      </div>
+      <input id="mSearch" class="inp" placeholder="Tìm bài, ca sĩ, album…" oninput="renderMusic()" style="margin:0 0 8px">
+      <div id="mUp" class="progress"></div>
+      <div id="mList" class="nets" style="margin-top:4px"></div>
+      <p class="note">Bấm vào bài để phát. Kéo thả file nhạc vào đây (máy tính) hoặc bấm "Tải nhạc lên" (điện thoại).
+        Nhạc lưu ở <code>/mnt/data/music</code> trên thẻ nhớ. Phát được cả qua link công khai sau khi đăng nhập.
+        App nghe nhạc hỗ trợ DLNA/UPnP (VLC, BubbleUPnP, foobar2000…) sẽ thấy máy chủ <b>BPI-R3 Music</b> khi bắt Wi-Fi của board.</p>
+    </div>
+  </section>
+
+  <!-- ================= Truy cập web ================= -->
+  <section class="tab local-only" data-tab="traffic">
+    <div class="card section">
+      <div class="row" style="justify-content:space-between;margin-bottom:10px">
+        <h2 style="margin:0">Các máy đã vào trang nào</h2>
+        <div class="row">
+          <select id="tDay" class="inp" style="width:auto;margin:0" onchange="loadTraffic()"></select>
+          <label class="chk" style="margin:0"><input type="checkbox" id="tHideBg" checked onchange="renderTraffic()"> Ẩn dịch vụ nền</label>
+          <button onclick="loadTraffic()">↻</button>
+        </div>
+      </div>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Máy</th><th>Thời gian dùng</th><th>Tải xuống / lên</th><th>Trang hay vào</th></tr></thead>
+          <tbody id="tDevices"><tr><td colspan="4">…</td></tr></tbody>
+        </table>
+      </div>
+      <p class="note">Chỉ biết <b>tên trang</b> (YouTube, Facebook…), không biết xem video/bài nào vì HTTPS đã mã hóa.
+        "Thời gian dùng" = số phút có truy cập (ước lượng, app chạy nền cũng tính). Dung lượng đo từ lúc bật thống kê.
+        Máy dùng VPN / iCloud Private Relay sẽ không ghi được.</p>
+    </div>
+
+    <div class="card section" id="tDetail" style="display:none">
+      <div class="row" style="justify-content:space-between;margin-bottom:6px">
+        <h2 style="margin:0" id="tDevName">…</h2>
+        <span class="note" style="margin:0" id="tDevMeta"></span>
+      </div>
+      <div class="label">Hoạt động theo giờ (số phút)</div>
+      <div id="tHours" style="display:flex;align-items:flex-end;gap:2px;height:70px;margin:6px 0 2px"></div>
+      <div style="display:flex;justify-content:space-between" class="label"><span>0h</span><span>6h</span><span>12h</span><span>18h</span><span>23h</span></div>
+      <div class="table-wrap" style="margin-top:12px">
+        <table>
+          <thead><tr><th>Trang</th><th>Nhóm</th><th>Phút</th><th>Lần cuối</th><th>Tên miền</th></tr></thead>
+          <tbody id="tSites"></tbody>
+        </table>
+      </div>
+      <h2 style="margin:16px 0 6px">Vừa truy cập <span class="note" id="tLiveNote"></span></h2>
+      <div class="table-wrap" style="max-height:300px;overflow:auto">
+        <table><tbody id="tRecent"></tbody></table>
+      </div>
+    </div>
+  </section>
+
+  <!-- ================= Điều khiển ================= -->
+  <section class="tab local-only" data-tab="device">
+    <div class="card section">
+      <h2>Đèn LED xanh dương <span class="led-dot" id="ledDot" style="vertical-align:middle;margin-left:6px"></span></h2>
+      <div class="row" id="ledBtns">
+        <button data-mode="on" onclick="setLed('on')">Bật</button>
+        <button data-mode="off" onclick="setLed('off')">Tắt</button>
+        <button data-mode="blink" onclick="setLed('blink')">Nhấp nháy</button>
+        <button data-mode="heartbeat" onclick="setLed('heartbeat')">Nhịp tim</button>
+      </div>
+      <p class="note">Đèn <code>blue:status</code> trên board, điều khiển qua <code>/sys/class/leds</code>.
+        Sau này gắn thêm GPIO, relay, cảm biến… sẽ đặt ở tab này.</p>
+    </div>
+  </section>
+
+  <!-- ================= Log ================= -->
+  <section class="tab local-only" data-tab="log">
+    <div class="card section">
+      <div class="row" style="justify-content:space-between">
+        <h2 style="margin:0">Log</h2>
+        <div class="row" id="logTabs">
+          <button data-src="server" class="active" onclick="loadLog('server')">Server</button>
+          <button data-src="tunnel" onclick="loadLog('tunnel')">Tunnel</button>
+          <button data-src="system" onclick="loadLog('system')">Hệ thống</button>
+          <button onclick="loadLog()">↻</button>
+        </div>
+      </div>
+      <pre id="log" style="max-height:60vh">…</pre>
+    </div>
+  </section>
+
+  <!-- ================= Hệ thống ================= -->
+  <section class="tab local-only" data-tab="system">
+    <div class="card section">
+      <h2>Mật khẩu truy cập từ xa</h2>
+      <p class="note" style="margin:0 0 10px" id="pwState">…</p>
+      <form class="grid" style="grid-template-columns:repeat(auto-fit,minmax(170px,1fr));margin:0"
+            onsubmit="event.preventDefault(); savePassword()">
+        <div id="pwCurWrap"><div class="label">Mật khẩu hiện tại</div>
+          <input id="pwCur" class="inp" type="password" autocomplete="current-password"></div>
+        <div><div class="label">Mật khẩu mới (ít nhất 8 ký tự)</div>
+          <input id="pwNew" class="inp" type="password" minlength="8" autocomplete="new-password" required></div>
+        <div><div class="label">Nhập lại mật khẩu mới</div>
+          <input id="pwNew2" class="inp" type="password" minlength="8" autocomplete="new-password" required></div>
+        <div style="display:flex;align-items:flex-end"><button class="primary" type="submit">Lưu mật khẩu</button></div>
+      </form>
+      <p class="note">Dùng khi mở bảng điều khiển qua link công khai. Trong mạng nội bộ không cần mật khẩu.
+        Đổi mật khẩu sẽ đăng xuất mọi thiết bị đang đăng nhập từ xa. Sai 5 lần liên tiếp sẽ bị khóa 5 phút.</p>
+    </div>
+
+    <div class="card section">
+      <h2>LuCI (giao diện quản trị OpenWrt)</h2>
+      <div class="row">
+        <a href="/cgi-bin/luci/" target="_blank" rel="noopener"><button>⚙️ Mở LuCI</button></a>
+      </div>
+      <p class="note">Mở được cả qua link công khai (sau khi đăng nhập trang này). LuCI hỏi thêm mật khẩu root của board.</p>
+    </div>
+
+    <div class="card section">
+      <h2>Khởi động lại</h2>
+      <div class="row">
+        <button onclick="restartServer()">Khởi động lại server</button>
+        <button class="danger" onclick="rebootBoard()">Khởi động lại board</button>
+      </div>
+      <p class="note">Khởi động lại board sẽ làm đổi link công khai và ngắt Wi-Fi khoảng 1 phút.</p>
+    </div>
+  </section>
+
+  <dialog id="dlg">
+    <form method="dialog" onsubmit="event.preventDefault(); doConnect()">
+      <h2 id="dlgTitle" style="margin:0 0 4px">Kết nối</h2>
+      <div class="note" id="dlgMeta" style="margin:0"></div>
+      <div id="dlgSsidWrap">
+        <label for="dlgSsid">Tên Wi-Fi (SSID)</label>
+        <input id="dlgSsid" maxlength="32" autocomplete="off">
+        <label for="dlgBand">Băng tần</label>
+        <select id="dlgBand"><option value="2g">2.4 GHz</option><option value="5g">5 GHz</option></select>
+      </div>
+      <div id="dlgKeyWrap">
+        <label for="dlgKey">Mật khẩu</label>
+        <input id="dlgKey" type="password" minlength="8" maxlength="63" autocomplete="off">
+        <label style="display:flex;gap:6px;align-items:center;margin-top:8px">
+          <input type="checkbox" style="width:auto" onchange="dlgKey.type=this.checked?'text':'password'"> Hiện mật khẩu
+        </label>
+      </div>
+      <div class="row" style="justify-content:flex-end;margin-top:16px">
+        <button type="button" onclick="dlg.close()">Hủy</button>
+        <button type="submit" class="primary">Kết nối</button>
+      </div>
+    </form>
+  </dialog>
+</main>
+
+<!-- Thanh phát nhạc: nằm ngoài các tab nên chuyển tab nhạc vẫn chạy -->
+<div id="player" style="display:none">
+  <img id="pCover" alt="">
+  <div class="p-main">
+    <div class="p-title"><span id="pOut" class="tag"></span> <b id="pTitle">…</b> <span id="pArtist" class="label"></span></div>
+    <div class="row" style="gap:6px;flex-wrap:nowrap">
+      <span class="label num" id="pCur">0:00</span>
+      <input type="range" id="pSeek" min="0" max="1000" value="0" style="flex:1">
+      <span class="label num" id="pDur">0:00</span>
+    </div>
+  </div>
+  <div class="p-btns">
+    <button id="pShuffle" title="Trộn bài" onclick="mToggle('shuffle')">🔀</button>
+    <button title="Bài trước" onclick="mPrev()">⏮</button>
+    <button id="pPlay" class="primary" title="Phát / dừng" onclick="mPlayPause()">▶</button>
+    <button title="Bài sau" onclick="mNext()">⏭</button>
+    <button id="pRepeat" title="Lặp" onclick="mToggle('repeat')">🔁</button>
+  </div>
+  <div class="p-vol" id="pVolWrap" style="display:none" title="Âm lượng loa board">
+    🔈 <input type="range" id="pVol" min="0" max="200" step="5" value="60" style="width:110px">
+    <span class="label num" id="pVolTxt" style="min-width:3.2em">60%</span>
+  </div>
+  <audio id="audio" preload="metadata"></audio>
+</div>
+<div id="toast"></div>
+
+<script>
+const $ = (id) => document.getElementById(id);
+let isLocal = false, logSrc = "server";
+
+function toast(msg) {
+  const t = $("toast"); t.textContent = msg; t.classList.add("show");
+  clearTimeout(t._h); t._h = setTimeout(() => t.classList.remove("show"), 3000);
+}
+function fmtDur(s) {
+  const d = Math.floor(s / 86400), h = Math.floor(s % 86400 / 3600), m = Math.floor(s % 3600 / 60);
+  return d ? `${d}d ${h}h ${m}m` : h ? `${h}h ${m}m` : `${m}m ${s % 60}s`;
+}
+function esc(s) { return String(s ?? "").replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c])); }
+
+async function api(path, body) {
+  const opt = body === undefined ? {} : {
+    method: "POST", headers: {"Content-Type": "application/json", "X-BPI": "1"}, body: JSON.stringify(body)
+  };
+  const r = await fetch(path, opt);
+  const j = await r.json().catch(() => ({}));
+  if (r.status === 401 && j.login) { showLogin(); throw new Error("Cần đăng nhập"); }
+  if (!r.ok) throw new Error(j.error || r.statusText);
+  return j;
+}
+
+function showLed(mode) {
+  $("ledDot").className = "led-dot " + (mode === "off" ? "" : mode === "on" ? "on" : mode);
+  document.querySelectorAll("#ledBtns button").forEach(b => b.classList.toggle("active", b.dataset.mode === mode));
+}
+
+async function refresh() {
+  try {
+    const s = await api("/api/status");
+    $("offline").style.display = "none";
+    $("host").textContent = s.hostname;
+    $("temp").textContent = s.cpu_temp_c == null ? "—" : s.cpu_temp_c + " °C";
+    $("load").textContent = s.load.join(" / ");
+    $("mem").textContent = `${s.mem_free_mb} / ${s.mem_total_mb} MB`;
+    $("wifi").textContent = s.wifi_clients;
+    $("up").textContent = fmtDur(s.uptime_s);
+    const w = ["Wi-Fi 2.4G", "Wi-Fi 5G"].filter(k => s.temps[k] != null).map(k => `${s.temps[k]}°`);
+    $("wtemp").textContent = w.length ? w.join(" / ") : "—";
+    showLed(s.led);
+    if (s.camera) $("camInfo").textContent = s.camera.on
+      ? `${s.camera.viewers} người đang xem · ${s.camera.fps} fps` : "Camera đang tắt";
+  } catch (e) {
+    $("offline").style.display = "block";
+  }
+}
+
+async function loadUrl() {
+  try {
+    const j = await api("/api/public-url");
+    $("purl").textContent = j.url || "(tunnel chưa chạy)";
+    $("sshBox").style.display = j.ssh ? "" : "none";
+    if (j.ssh) $("sshCmd").textContent = `ssh -o ProxyCommand="cloudflared access ssh --hostname %h" root@${j.ssh}`;
+  } catch {}
+}
+async function copySsh() {
+  const t = $("sshCmd").textContent;
+  try { await navigator.clipboard.writeText(t); toast("Đã sao chép lệnh SSH"); } catch { prompt("Lệnh SSH:", t); }
+}
+function currentUrl() { const u = $("purl").textContent; return u.startsWith("https://") ? u : null; }
+async function copyUrl() {
+  const u = currentUrl(); if (!u) return toast("Chưa có link");
+  try { await navigator.clipboard.writeText(u); toast("Đã sao chép link"); }
+  catch { prompt("Sao chép link:", u); }
+}
+function openUrl() { const u = currentUrl(); if (u) window.open(u, "_blank"); }
+
+async function newLink() {
+  if (!confirm("Tạo link mới? Link cũ sẽ ngừng hoạt động.")) return;
+  const b = $("btnNewLink"); b.disabled = true; b.textContent = "Đang tạo… (~10 giây)";
+  try { $("purl").textContent = (await api("/api/new-link", {})).url || "(chưa lấy được link)"; toast("Đã tạo link mới"); }
+  catch (e) { toast("Lỗi: " + e.message); }
+  finally { b.disabled = false; b.textContent = "Tạo link mới"; }
+}
+
+async function setLed(mode) {
+  try { showLed((await api("/api/led", {mode})).led); } catch (e) { toast("Lỗi: " + e.message); }
+}
+
+async function loadClients() {
+  try {
+    const list = await api("/api/clients");
+    $("clients").innerHTML = list.length ? list.map(c => `<tr>
+      <td>${esc(c.name) || "<span style='color:var(--muted)'>(không tên)</span>"}</td>
+      <td class="num">${esc(c.ip)}</td><td>${esc(c.band)}</td>
+      <td class="num">${c.signal ?? "?"} dBm</td><td class="num">${c.connected_s != null ? fmtDur(c.connected_s) : ""}</td>
+      <td class="num" style="color:var(--muted)">${esc(c.mac)}</td></tr>`).join("")
+      : `<tr><td colspan="6" style="color:var(--muted)">Chưa có máy nào bắt Wi-Fi của board.</td></tr>`;
+  } catch (e) { $("clients").innerHTML = `<tr><td colspan="6">Lỗi: ${esc(e.message)}</td></tr>`; }
+}
+
+async function loadLog(src) {
+  if (src) logSrc = src;
+  document.querySelectorAll("#logTabs button[data-src]").forEach(b => b.classList.toggle("active", b.dataset.src === logSrc));
+  try {
+    const pre = $("log"); pre.textContent = (await api("/api/log?src=" + logSrc)).log || "(trống)";
+    pre.scrollTop = pre.scrollHeight;
+  } catch (e) { $("log").textContent = "Lỗi: " + e.message; }
+}
+
+async function restartServer() {
+  try { toast((await api("/api/restart", {})).msg); setTimeout(() => location.reload(), 4000); }
+  catch (e) { toast("Lỗi: " + e.message); }
+}
+async function rebootBoard() {
+  if (!confirm("Khởi động lại cả board? Wi-Fi và link công khai sẽ mất khoảng 1 phút.")) return;
+  try { toast((await api("/api/reboot", {})).msg); } catch (e) { toast("Lỗi: " + e.message); }
+}
+
+// ---------------- Wi-Fi Internet
+let target = null, wifiPoll = null;
+const bandText = (b) => b === "5g" ? "5 GHz" : "2.4 GHz";
+function bars(sig) {
+  const n = sig == null ? 0 : sig >= -55 ? 4 : sig >= -65 ? 3 : sig >= -75 ? 2 : 1;
+  return `<span class="bars">${[6, 9, 12, 14].map((h, i) => `<i style="height:${h}px" class="${i < n ? "on" : ""}"></i>`).join("")}</span>`;
+}
+
+function showWan(s) {
+  $("wan").innerHTML = s.connected && s.ip
+    ? `<span class="dot ok"></span><b>${esc(s.ssid)}</b>${bars(s.signal)}
+       <span class="meta">${bandText(s.band)} · kênh ${s.channel} · ${s.signal} dBm · ${s.bitrate_mbps} Mbps · IP ${esc(s.ip)}</span>`
+    : `<span class="dot"></span><b>${esc(s.ssid) || "(chưa cấu hình)"}</b><span class="meta">chưa có kết nối Internet</span>`;
+  const p = $("wifiProgress"), j = s.job || {};
+  p.className = "progress " + (j.state && j.state !== "idle" ? j.state : "");
+  p.textContent = j.state === "running" ? "⏳ " + j.msg : j.msg || "";
+}
+
+async function loadWifiStatus() {
+  try { const s = await api("/api/wifi/status"); showWan(s); return s; } catch { return null; }
+}
+
+async function scanWifi() {
+  const b = $("btnScan"); b.disabled = true; b.textContent = "Đang quét…";
+  $("nets").innerHTML = `<div class="note">Đang quét cả 2.4 GHz và 5 GHz (khoảng 5–10 giây)…</div>`;
+  try {
+    const list = await api("/api/wifi/scan");
+    window._nets = list;
+    $("nets").innerHTML = list.length ? list.map((n, i) => `
+      <button class="net" onclick="pickNet(${i})" ${n.supported ? "" : "disabled"}>
+        ${bars(n.signal)}
+        <span class="name">${esc(n.ssid)}</span>
+        ${n.current ? '<span class="tag cur">đang dùng</span>' : ""}
+        <span class="tag">${bandText(n.band)}</span>
+        <span class="meta">${n.encryption === "none" ? "🔓" : "🔒"} ${esc(n.enc_text)} · ${n.signal} dBm</span>
+      </button>`).join("") : `<div class="note">Không thấy mạng nào.</div>`;
+  } catch (e) { $("nets").innerHTML = `<div class="note">Lỗi quét: ${esc(e.message)}</div>`; }
+  finally { b.disabled = false; b.textContent = "Quét lại"; }
+}
+
+function pickNet(i) {
+  const n = window._nets[i];
+  target = {ssid: n.ssid, band: n.band, encryption: n.encryption};
+  $("dlgTitle").textContent = n.ssid;
+  const dfs = n.band === "5g" && n.channel >= 52 && n.channel <= 144;
+  $("dlgMeta").innerHTML = esc(`${bandText(n.band)} · kênh ${n.channel} · ${n.enc_text} · ${n.signal} dBm`) +
+    (dfs ? `<br><span style="color:var(--warn)">⚠ Kênh ${n.channel} là kênh DFS (radar): Wi-Fi BPI-R3-5G của board sẽ
+             <b>tắt</b> khi bắt mạng này. Nên chọn bản 2.4 GHz.</span>`
+         : n.band === "5g" ? `<br><span style="color:var(--warn)">Wi-Fi BPI-R3-5G sẽ chuyển sang kênh ${n.channel}.</span>` : "");
+  $("dlgSsidWrap").style.display = "none";
+  $("dlgKeyWrap").style.display = n.encryption === "none" ? "none" : "";
+  $("dlgKey").value = ""; $("dlgKey").required = n.encryption !== "none";
+  $("dlg").showModal(); if (n.encryption !== "none") $("dlgKey").focus();
+}
+
+function openHidden() {
+  target = null;
+  $("dlgTitle").textContent = "Mạng ẩn"; $("dlgMeta").textContent = "Nhập tên và mật khẩu (để trống nếu mạng mở).";
+  $("dlgSsidWrap").style.display = ""; $("dlgKeyWrap").style.display = "";
+  $("dlgSsid").value = ""; $("dlgKey").value = ""; $("dlgKey").required = false;
+  $("dlg").showModal(); $("dlgSsid").focus();
+}
+
+async function doConnect() {
+  const body = target
+    ? {...target, key: $("dlgKey").value}
+    : {ssid: $("dlgSsid").value.trim(), band: $("dlgBand").value, key: $("dlgKey").value};
+  if (!body.ssid) return toast("Nhập tên Wi-Fi");
+  try {
+    await api("/api/wifi/connect", body);
+    $("dlg").close();
+    showWan({ssid: body.ssid, job: {state: "running", msg: `Đang kết nối '${body.ssid}'… (tối đa ~1 phút)`}});
+    watchWifi();
+  } catch (e) { toast("Lỗi: " + e.message); }
+}
+
+function watchWifi() {
+  clearInterval(wifiPoll);
+  wifiPoll = setInterval(async () => {
+    const s = await loadWifiStatus();          // null khi Wi-Fi BPI-R3 đang rớt: cứ thử lại
+    if (s && s.job.state !== "running") {
+      clearInterval(wifiPoll);
+      toast(s.job.state === "ok" ? "✅ " + s.job.msg : "❌ " + s.job.msg);
+      if (window._nets) scanWifi();
+    }
+  }, 2000);
+}
+
+// ---------------- Mạng LAN
+let lanCur = null;
+const ip2n = (s) => s.split(".").reduce((a, o) => a * 256 + (+o), 0);
+const n2ip = (n) => [24, 16, 8, 0].map(s => Math.floor(n / 2 ** s) % 256).join(".");
+function validIp(s) { return /^(\d{1,3}\.){3}\d{1,3}$/.test(s) && s.split(".").every(o => +o <= 255); }
+
+function lanPreview() {
+  const ip = $("lanIp").value.trim(), p = +$("lanPrefix").value, st = +$("lanStart").value, lim = +$("lanLimit").value;
+  if (!validIp(ip)) return $("lanPreview").textContent = "IP không hợp lệ";
+  const size = 2 ** (32 - p), net = Math.floor(ip2n(ip) / size) * size;
+  const okRange = st >= 1 && lim >= 1 && st + lim < size - 1;
+  $("lanPreview").innerHTML = `Mạng <b>${n2ip(net)}/${p}</b> · board ở <b>${esc(ip)}</b> · cấp IP cho các máy từ ` +
+    (okRange ? `<b>${n2ip(net + st)}</b> đến <b>${n2ip(net + st + lim - 1)}</b>` : `<span style="color:var(--bad)">dải DHCP vượt quá mạng</span>`);
+}
+["lanIp", "lanPrefix", "lanStart", "lanLimit"].forEach(id => $(id).addEventListener("input", lanPreview));
+
+async function loadLan() {
+  try {
+    const c = lanCur = await api("/api/lan");
+    $("lanNow").innerHTML = `<span class="dot ok"></span><b>${esc(c.ip)}/${c.prefix}</b>
+      <span class="meta">mạng ${esc(c.network)} · DHCP ${esc(c.dhcp_from)} – ${esc(c.dhcp_to)}</span>`;
+    if (!$("lanIp").value) {
+      $("lanIp").value = c.ip; $("lanPrefix").value = String(c.prefix);
+      $("lanStart").value = c.dhcp_start; $("lanLimit").value = c.dhcp_limit; lanPreview();
+    }
+    // Phải mở trang bằng IP LAN của board thì mới đổi được (để trang tự chuyển sang IP mới).
+    const viaLan = location.hostname === c.ip;
+    $("btnLan").disabled = !viaLan || c.job.state === "running";
+    $("lanHint").innerHTML = viaLan ? "" : `Muốn đổi, hãy bắt Wi-Fi BPI-R3 rồi mở <b>http://${esc(c.ip)}:8080</b>`;
+  } catch {}
+}
+
+async function applyLan() {
+  const body = {ip: $("lanIp").value.trim(), prefix: +$("lanPrefix").value,
+                dhcp_start: +$("lanStart").value, dhcp_limit: +$("lanLimit").value};
+  if (!validIp(body.ip)) return toast("IP không hợp lệ");
+  if (!confirm(`Đổi IP board sang ${body.ip}/${body.prefix}?\n\nMạng sẽ rớt vài giây. Trang sẽ tự chuyển sang địa chỉ mới.` +
+               `\nNếu trong 3 phút không vào được địa chỉ mới, board tự quay về ${lanCur.ip}.`)) return;
+  let r;
+  try { r = await api("/api/lan", body); } catch (e) { return toast("Lỗi: " + e.message); }
+  $("btnLan").disabled = true;
+  const p = $("lanProgress"), deadline = Date.now() + r.wait_s * 1000, newUrl = `http://${r.new_ip}:8080/`;
+  p.className = "progress running";
+  const tick = async () => {
+    const left = Math.round((deadline - Date.now()) / 1000);
+    if (left <= 0) {
+      p.className = "progress failed";
+      p.innerHTML = `Không vào được ${esc(r.new_ip)}, board đã quay về <a href="http://${esc(lanCur.ip)}:8080/">${esc(lanCur.ip)}</a>. ` +
+                    `Tắt/bật Wi-Fi rồi tải lại trang.`;
+      return;
+    }
+    p.innerHTML = `⏳ Đang chuyển sang <b>${esc(r.new_ip)}</b>… còn ${left}s. ` +
+      `Nếu lâu quá, hãy <b>tắt/bật Wi-Fi</b> (hoặc rút/cắm dây mạng) để máy nhận IP mới.`;
+    try {
+      await fetch(`${newUrl}api/lan/confirm?token=${r.token}`, {mode: "no-cors", cache: "no-store"});
+      p.className = "progress ok"; p.textContent = `✅ Đã đổi xong, đang mở ${newUrl}`;
+      setTimeout(() => location.href = newUrl + "#lan", 800);
+      return;
+    } catch {}
+    setTimeout(tick, 2000);
+  };
+  setTimeout(tick, 4000);
+}
+
+// ---------------- Camera
+let camClockTimer = null, camRetry = null;
+function camStart() {
+  const img = $("camImg");
+  clearTimeout(camRetry);
+  $("camMsg").style.display = "flex"; $("camMsg").textContent = "Đang kết nối camera…";
+  img.onload = () => { $("camMsg").style.display = "none"; };
+  img.onerror = () => {   // hết chỗ xem, board khởi động lại, mất mạng… -> thử lại
+    $("camMsg").style.display = "flex";
+    $("camMsg").textContent = "Mất kết nối camera, đang thử lại…";
+    camRetry = setTimeout(camStart, 3000);
+  };
+  img.src = "/camera.mjpg?t=" + Date.now();
+  visionStart();
+  setTimeout(() => { if (img.getAttribute("src") && img.naturalWidth) $("camMsg").style.display = "none"; }, 2500);
+  clearInterval(camClockTimer);
+  const tick = () => { $("camClock").textContent = new Date().toLocaleString("vi-VN", {hour12: false}); };
+  tick(); camClockTimer = setInterval(tick, 1000);
+}
+// ---- Nhận dạng người: nhận tọa độ qua SSE, vẽ lên canvas phủ trên video
+let visionES = null, lastDet = null;
+const idColor = (id) => `hsl(${(id * 67) % 360} 90% 55%)`;
+function visionStart() {
+  visionStop();
+  visionES = new EventSource("/api/vision/stream");
+  visionES.onmessage = (ev) => { lastDet = JSON.parse(ev.data); drawDet(); };
+  visionES.onerror = () => { $("camCount").style.display = "none"; };   // EventSource tự kết nối lại
+}
+function visionStop() {
+  if (visionES) { visionES.close(); visionES = null; }
+  lastDet = null; drawDet();
+}
+function drawDet() {
+  const cv = $("camCanvas"), box = $("camBox"), dpr = window.devicePixelRatio || 1;
+  const W = box.clientWidth, H = box.clientHeight;
+  if (cv.width !== Math.round(W * dpr) || cv.height !== Math.round(H * dpr)) { cv.width = W * dpr; cv.height = H * dpr; }
+  const c = cv.getContext("2d");
+  c.setTransform(dpr, 0, 0, dpr, 0, 0); c.clearRect(0, 0, W, H);
+  const d = lastDet;
+  if (!d) return;
+  $("vNow").textContent = d.count; $("vTotal").textContent = d.total; $("vMs").textContent = d.ms + " ms/khung";
+  $("camCount").style.display = ""; $("camCount").textContent = `👤 ${d.count} người · tổng ${d.total}`;
+  // video giữ tỉ lệ (object-fit: contain) -> tính vùng ảnh thật trong khung
+  const s = Math.min(W / d.w, H / d.h), ox = (W - d.w * s) / 2, oy = (H - d.h * s) / 2;
+  const X = (x) => ox + x * s, Y = (y) => oy + y * s;
+  for (const p of d.people) {
+    const col = idColor(p.id);
+    if ($("vTrails").checked && p.trail.length > 1) {
+      c.strokeStyle = col; c.lineWidth = 2; c.globalAlpha = .8; c.beginPath();
+      p.trail.forEach(([x, y], i) => i ? c.lineTo(X(x), Y(y)) : c.moveTo(X(x), Y(y)));
+      c.stroke(); c.globalAlpha = 1;
+    }
+    if ($("vBoxes").checked) {
+      const [x, y, w, h] = p.box;
+      c.strokeStyle = col; c.lineWidth = 2; c.strokeRect(X(x), Y(y), w * s, h * s);
+      const label = "#" + p.id;
+      c.font = "600 12px ui-monospace, Consolas, monospace";
+      const tw = c.measureText(label).width + 8;
+      c.fillStyle = col; c.fillRect(X(x), Y(y) - 16, tw, 16);
+      c.fillStyle = "#000"; c.fillText(label, X(x) + 4, Y(y) - 4);
+    }
+  }
+}
+window.addEventListener("resize", drawDet);
+
+function camStop() {   // rời tab thì ngắt stream để không tốn băng thông
+  visionStop();
+  clearTimeout(camRetry); clearInterval(camClockTimer);
+  const img = $("camImg"); img.onerror = null; img.removeAttribute("src");
+}
+function camSnapshot() {
+  const a = document.createElement("a");
+  a.href = "/camera.jpg?t=" + Date.now();
+  a.download = "cam-" + new Date().toISOString().replace(/[:.]/g, "-") + ".jpg";
+  a.click();
+}
+function camFull() { const b = $("camBox"); (b.requestFullscreen || b.webkitRequestFullscreen)?.call(b); }
+async function camCopy() {
+  const base = isLocal ? location.origin : (currentUrl() || location.origin);
+  const u = base.replace(/\/$/, "") + "/camera.mjpg";
+  try { await navigator.clipboard.writeText(u); toast("Đã sao chép: " + u); } catch { prompt("Link stream:", u); }
+}
+
+// ---------------- Truy cập web
+const CAT = {video: "🎬 Video", mxh: "👥 MXH", chat: "💬 Chat", mua: "🛒 Mua sắm", nhac: "🎵 Nhạc", ai: "🤖 AI",
+             game: "🎮 Game", web: "🌐 Web", nen: "⚙️ Nền", dns: "🔒 DNS riêng"};
+const DOH_WARN = "Máy này có dấu hiệu dùng DNS mã hóa riêng (DoH/DoT), nhiều trang có thể không được ghi";
+let tData = null, tSel = null, tTimer = null;
+function fmtBytes(b) {
+  if (!b) return "0";
+  const u = ["B", "KB", "MB", "GB", "TB"]; let i = 0;
+  while (b >= 1024 && i < u.length - 1) { b /= 1024; i++; }
+  return (b >= 100 || i === 0 ? b.toFixed(0) : b.toFixed(1)) + " " + u[i];
+}
+function fmtMin(m) { return m >= 60 ? `${Math.floor(m / 60)}h ${m % 60}m` : `${m} phút`; }
+function fmtTime(t) { return new Date(t * 1000).toLocaleTimeString("vi-VN", {hour: "2-digit", minute: "2-digit"}); }
+function devLabel(d) { return d.name || d.ip || d.mac; }
+async function loadTraffic() {
+  const day = $("tDay").value;
+  try { tData = await api("/api/traffic" + (day ? "?day=" + day : "")); }
+  catch (e) { $("tDevices").innerHTML = `<tr><td colspan="4">${esc(e.message)}</td></tr>`; return; }
+  const sel = $("tDay");
+  sel.innerHTML = tData.days.map(d => `<option value="${d}">${d === tData.today ? "Hôm nay" : d}</option>`).join("");
+  sel.value = tData.day;
+  renderTraffic();
+}
+function visibleSites(d) { return $("tHideBg").checked ? d.sites.filter(s => s.c !== "nen") : d.sites; }
+function renderTraffic() {
+  if (!tData) return;
+  const devs = tData.devices;
+  $("tDevices").innerHTML = devs.length ? devs.map(d => {
+    const b = tData.bytes[d.mac] || {};
+    const top = visibleSites(d).slice(0, 4).map(s => esc(s.site)).join(", ");
+    return `<tr style="cursor:pointer" onclick="selectDev('${esc(d.mac)}')" class="${d.mac === tSel ? "sel" : ""}">
+      <td><b>${esc(devLabel(d))}</b>${d.sites.some(s => s.c === "dns") ? ` <span title="${DOH_WARN}">⚠️</span>` : ""}<div class="label">${esc(d.ip)} · ${esc(d.mac)}</div></td>
+      <td class="num">${fmtMin(d.minutes)}</td>
+      <td class="num">${b.rx !== undefined ? fmtBytes(b.rx) + " / " + fmtBytes(b.tx) : "—"}</td>
+      <td>${top || '<span class="label">chưa có</span>'}</td></tr>`;
+  }).join("") : `<tr><td colspan="4">Chưa có dữ liệu. Dùng thử một máy bắt Wi-Fi của board rồi bấm ↻.</td></tr>`;
+  if (tSel && devs.some(d => d.mac === tSel)) renderDev(); else $("tDetail").style.display = "none";
+}
+function selectDev(mac) { tSel = mac; renderTraffic(); $("tDetail").scrollIntoView({behavior: "smooth", block: "start"}); }
+function renderDev() {
+  const d = tData.devices.find(x => x.mac === tSel);
+  $("tDetail").style.display = "";
+  $("tDevName").textContent = devLabel(d);
+  const b = tData.bytes[d.mac];
+  $("tDevMeta").textContent = `${fmtMin(d.minutes)} · ${d.site_count} trang` + (b ? ` · ↓${fmtBytes(b.rx)} ↑${fmtBytes(b.tx)}` : "");
+  const max = Math.max(1, ...d.hours);
+  $("tHours").innerHTML = d.hours.map((v, h) =>
+    `<div title="${h}h: ${v} phút" style="flex:1;background:${v ? "var(--accent)" : "var(--line)"};border-radius:2px 2px 0 0;height:${Math.max(2, v / max * 100)}%"></div>`).join("");
+  if (d.sites.some(s => s.c === "dns")) $("tDevMeta").textContent += " · ⚠️ " + DOH_WARN;
+  const sites = visibleSites(d);
+  $("tSites").innerHTML = sites.length ? sites.map(s => `<tr>
+      <td><b>${esc(s.site)}</b></td><td>${CAT[s.c] || esc(s.c)}</td>
+      <td class="num">${s.m}</td><td class="num">${fmtTime(s.l)}</td>
+      <td class="label" style="word-break:break-all">${s.x.map(esc).join(", ")}</td></tr>`).join("")
+    : `<tr><td colspan="5">Không có</td></tr>`;
+  loadRecent();
+}
+async function loadRecent() {
+  clearTimeout(tTimer);
+  if (!tSel || !$("tDetail").offsetParent) return;
+  const live = tData.day === tData.today;
+  $("tLiveNote").textContent = live ? "(tự cập nhật mỗi 5 giây)" : "(chỉ có cho hôm nay)";
+  if (!live) { $("tRecent").innerHTML = ""; return; }
+  try {
+    let ev = await api("/api/traffic/recent?mac=" + encodeURIComponent(tSel));
+    if ($("tHideBg").checked) ev = ev.filter(e => e.c !== "nen");
+    $("tRecent").innerHTML = ev.length ? ev.slice(0, 60).map(e =>
+      `<tr><td class="num" style="width:60px">${fmtTime(e.t)}</td><td><b>${esc(e.site)}</b></td><td class="label">${esc(e.host)}</td></tr>`).join("")
+      : `<tr><td class="label">Chưa có (chỉ ghi từ lúc server chạy)</td></tr>`;
+  } catch {}
+  tTimer = setTimeout(loadRecent, 5000);
+}
+
+// ---------------- Nhạc
+let mTracks = [], mQueue = [], mPos = -1, mOpt = {shuffle: false, repeat: false};
+try { Object.assign(mOpt, JSON.parse(localStorage.getItem("bpiMusicOpt") || "{}")); } catch {}
+const audio = $("audio");
+function fmtSec(s) { s = Math.floor(s || 0); return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`; }
+function mUrl(kind, id) { return `/music/${kind}?id=${encodeURIComponent(id)}`; }
+async function loadMusic() {
+  try {
+    const j = await api("/api/music");
+    mTracks = j.tracks;
+    $("mInfo").textContent = `· ${j.tracks.length} bài · ${fmtBytes(j.used)} · còn trống ${fmtBytes(j.free)}`
+      + (j.scanning ? ` · đang đọc thông tin ${j.scanning} bài…` : "");
+    renderMusic();
+    if (j.scanning) setTimeout(loadMusic, 2000);
+  } catch (e) { $("mList").innerHTML = `<div class="note">${esc(e.message)}</div>`; }
+}
+function mFiltered() {
+  const k = $("mSearch").value.trim().toLowerCase();
+  return k ? mTracks.filter(t => [t.title, t.artist, t.album, t.folder].join(" ").toLowerCase().includes(k)) : mTracks;
+}
+// ---- Phát ra loa USB của board: trang chỉ làm remote, trạng thái lấy từ /api/speaker
+let mOut = "local", sp = null, spTimer = null;
+try { mOut = localStorage.getItem("bpiMusicOut") || "local"; } catch {}
+async function spCmd(body) {
+  try { spRender(await api("/api/speaker", body)); } catch (e) { toast("Loa board: " + e.message); }
+}
+async function spPoll() {
+  clearTimeout(spTimer);
+  try { spRender(await api("/api/speaker")); } catch {}
+  if (mOut === "board") spTimer = setTimeout(spPoll, document.hidden ? 5000 : 1000);
+}
+function spRender(s) {
+  sp = s;
+  if (mOut !== "board") return;
+  $("mOutNote").textContent = s.available ? `· ${s.card}` : "· ⚠️ chưa thấy loa USB";
+  if (s.error) $("mOutNote").textContent += " · " + s.error;
+  const t = s.track;
+  if (t) {
+    $("player").style.display = ""; document.body.classList.add("playing");
+    if ($("pTitle").textContent !== t.title) {
+      $("pTitle").textContent = t.title; $("pArtist").textContent = t.artist || "";
+      $("pCover").src = t.cover ? mUrl("cover", t.id) : MUSIC_ICON;
+    }
+  }
+  $("pPlay").textContent = s.state === "playing" ? "⏸" : "▶";
+  $("pCur").textContent = fmtSec(s.pos); $("pDur").textContent = fmtSec(s.dur);
+  if (!$("pSeek")._drag && s.dur) $("pSeek").value = s.pos / s.dur * 1000;
+  if (!$("pVol")._drag) { $("pVol").value = s.volume; showVol(s.volume); }
+  mOpt.shuffle = s.shuffle; mOpt.repeat = s.repeat; mShowOpt();
+  renderMusicHighlight();
+}
+function mSetOut(o) {
+  mOut = o;
+  try { localStorage.setItem("bpiMusicOut", o); } catch {}
+  document.querySelectorAll("#mOutBtns button").forEach(b => b.classList.toggle("active", b.dataset.out === o));
+  $("pVolWrap").style.display = o === "board" ? "" : "none";
+  $("pOut").textContent = o === "board" ? "🔊 Loa board" : "📱 Máy này";
+  $("pTitle").textContent = "";
+  if (o === "board") {
+    audio.pause();
+    spPoll();
+  } else {
+    clearTimeout(spTimer);
+    $("mOutNote").textContent = "";
+    const t = mQueue[mPos];
+    if (t) { $("pTitle").textContent = t.title; $("pArtist").textContent = t.artist || ""; }
+    else { $("player").style.display = "none"; document.body.classList.remove("playing"); }
+    $("pPlay").textContent = audio.paused ? "▶" : "⏸";
+    try { Object.assign(mOpt, JSON.parse(localStorage.getItem("bpiMusicOpt") || "{}")); } catch {}
+    mShowOpt();
+  }
+  renderMusicHighlight();
+}
+function curTrackId() { return mOut === "board" ? sp?.track?.id : mQueue[mPos]?.id; }
+function renderMusicHighlight() {
+  const id = curTrackId(), list = mFiltered();
+  document.querySelectorAll("#mList .track").forEach((el, i) => el.classList.toggle("playing", list[i]?.id === id));
+}
+function showVol(v) {
+  $("pVolTxt").textContent = v + "%";
+  $("pVolTxt").style.color = v > 100 ? "var(--warn)" : "";
+  $("pVolWrap").title = v > 100 ? "Trên 100%: tăng âm bằng phần mềm (có chống rè)" : "Âm lượng loa board";
+}
+$("pVol").addEventListener("input", () => { $("pVol")._drag = true; showVol(+$("pVol").value); });
+$("pVol").addEventListener("change", () => { $("pVol")._drag = false; spCmd({action: "volume", volume: +$("pVol").value}); });
+const MUSIC_ICON = "data:image/svg+xml," + encodeURIComponent(
+  '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 40 40"><text x="50%" y="58%" font-size="22" text-anchor="middle" dominant-baseline="middle">🎵</text></svg>');
+
+function renderMusic() {
+  const list = mFiltered(), cur = {id: curTrackId()};
+  $("mList").innerHTML = list.length ? list.map((t, i) => `
+    <div class="net track ${cur && cur.id === t.id ? "playing" : ""}" style="cursor:pointer" onclick="mPlayFrom(${i})">
+      ${t.cover ? `<img class="cov" loading="lazy" src="${mUrl("cover", t.id)}" alt="">` : `<span class="cov">🎵</span>`}
+      <span class="name">${esc(t.title)}<div class="meta">${esc([t.artist, t.album].filter(Boolean).join(" · ") || t.folder || "")}</div></span>
+      <span class="meta">${t.dur ? fmtSec(t.dur) : ""}</span>
+      <button title="Xóa" onclick="event.stopPropagation(); mDelete(mFiltered()[${i}].id)">🗑</button>
+    </div>`).join("")
+    : `<div class="note">${mTracks.length ? "Không có bài nào khớp." : "Chưa có bài nào. Bấm “Tải nhạc lên” để thêm."}</div>`;
+}
+function mPlayFrom(i) {
+  const list = mFiltered();
+  if (mOut === "board") return spCmd({action: "play", ids: list.map(t => t.id), index: i});
+  mQueue = list.slice();
+  if (mOpt.shuffle) {   // bài được bấm phát trước, còn lại trộn ngẫu nhiên
+    const first = mQueue.splice(i, 1)[0];
+    for (let k = mQueue.length - 1; k > 0; k--) { const r = Math.floor(Math.random() * (k + 1)); [mQueue[k], mQueue[r]] = [mQueue[r], mQueue[k]]; }
+    mQueue.unshift(first); i = 0;
+  }
+  mPlay(i);
+}
+function mPlay(i) {
+  if (i < 0 || i >= mQueue.length) return;
+  mPos = i;
+  const t = mQueue[i];
+  audio.src = mUrl("file", t.id);
+  audio.play().catch(e => toast("Không phát được: " + e.message));
+  $("player").style.display = ""; document.body.classList.add("playing");
+  $("pTitle").textContent = t.title; $("pArtist").textContent = t.artist || "";
+  $("pCover").src = t.cover ? mUrl("cover", t.id) : MUSIC_ICON;
+  if ("mediaSession" in navigator) {   // điều khiển trên màn hình khóa / tai nghe
+    navigator.mediaSession.metadata = new MediaMetadata({title: t.title, artist: t.artist, album: t.album,
+      artwork: t.cover ? [{src: location.origin + mUrl("cover", t.id), sizes: "300x300", type: "image/jpeg"}] : []});
+  }
+  renderMusic();
+}
+function mPlayPause() {
+  if (mOut === "board") return sp?.track ? spCmd({action: "toggle"}) : mPlayFrom(0);
+  if (!audio.src) return mPlayFrom(0);
+  audio.paused ? audio.play() : audio.pause();
+}
+function mNext(auto) {
+  if (mOut === "board" && !auto) return spCmd({action: "next"});
+  if (mPos + 1 < mQueue.length) return mPlay(mPos + 1);
+  if (mOpt.repeat || !auto) return mPlay(0);
+}
+function mPrev() {
+  if (mOut === "board") return spCmd({action: "prev"});
+  if (audio.currentTime > 3) audio.currentTime = 0; else mPlay(mPos > 0 ? mPos - 1 : mQueue.length - 1);
+}
+function mToggle(k) {
+  if (mOut === "board") {
+    spCmd({action: k, on: !mOpt[k]});
+    return toast((k === "shuffle" ? "Trộn bài: " : "Lặp danh sách: ") + (!mOpt[k] ? "bật" : "tắt"));
+  }
+  mOpt[k] = !mOpt[k];
+  try { localStorage.setItem("bpiMusicOpt", JSON.stringify(mOpt)); } catch {}
+  mShowOpt(); toast((k === "shuffle" ? "Trộn bài: " : "Lặp danh sách: ") + (mOpt[k] ? "bật" : "tắt"));
+}
+function mShowOpt() { $("pShuffle").classList.toggle("on", mOpt.shuffle); $("pRepeat").classList.toggle("on", mOpt.repeat); }
+audio.addEventListener("play", () => { if (mOut === "local") $("pPlay").textContent = "⏸"; });
+audio.addEventListener("pause", () => { if (mOut === "local") $("pPlay").textContent = "▶"; });
+audio.addEventListener("ended", () => { if (mOut === "local") mNext(true); });
+audio.addEventListener("error", () => {
+  if (!audio.src || mOut !== "local") return;
+  toast("Lỗi phát bài này" + (mQueue.length > 1 ? ", chuyển bài sau" : ""));
+  if (mQueue.length > 1) setTimeout(() => mNext(true), 1500);
+});
+audio.addEventListener("timeupdate", () => {
+  if (mOut !== "local") return;
+  $("pCur").textContent = fmtSec(audio.currentTime); $("pDur").textContent = fmtSec(audio.duration);
+  if (!$("pSeek")._drag && audio.duration) $("pSeek").value = audio.currentTime / audio.duration * 1000;
+});
+$("pSeek").addEventListener("input", () => { $("pSeek")._drag = true; });
+$("pSeek").addEventListener("change", () => {
+  $("pSeek")._drag = false;
+  if (mOut === "board") return sp?.dur && spCmd({action: "seek", pos: $("pSeek").value / 1000 * sp.dur});
+  if (audio.duration) audio.currentTime = $("pSeek").value / 1000 * audio.duration;
+});
+if ("mediaSession" in navigator) {
+  navigator.mediaSession.setActionHandler("play", () => audio.play());
+  navigator.mediaSession.setActionHandler("pause", () => audio.pause());
+  navigator.mediaSession.setActionHandler("previoustrack", mPrev);
+  navigator.mediaSession.setActionHandler("nexttrack", () => mNext());
+}
+mShowOpt();
+async function mDelete(id) {
+  const t = mTracks.find(x => x.id === id);
+  if (!confirm(`Xóa bài "${t ? t.title : id}" khỏi board? Không khôi phục được.`)) return;
+  try { await api("/api/music/delete", {id}); toast("Đã xóa"); loadMusic(); } catch (e) { toast("Lỗi: " + e.message); }
+}
+function mUploadOne(file, idx, total) {
+  return new Promise((resolve, reject) => {
+    const x = new XMLHttpRequest();
+    x.open("POST", "/api/music/upload?name=" + encodeURIComponent(file.name));
+    x.setRequestHeader("X-BPI", "1");
+    x.setRequestHeader("Content-Type", "application/octet-stream");
+    x.upload.onprogress = e => {
+      if (e.lengthComputable) $("mUp").textContent =
+        `Đang tải lên ${idx}/${total}: ${file.name} — ${Math.round(e.loaded / e.total * 100)}%`;
+    };
+    x.onload = () => {
+      let j = {}; try { j = JSON.parse(x.responseText); } catch {}
+      x.status === 200 ? resolve(j) : reject(new Error(j.error || x.statusText || "HTTP " + x.status));
+    };
+    x.onerror = () => reject(new Error("mất kết nối"));
+    x.send(file);
+  });
+}
+async function mUpload(files) {
+  files = [...files];
+  if (!files.length) return;
+  const box = $("mUp"); box.className = "progress running";
+  let ok = 0; const errs = [];
+  for (let i = 0; i < files.length; i++) {
+    try { await mUploadOne(files[i], i + 1, files.length); ok++; }
+    catch (e) { errs.push(`${files[i].name}: ${e.message}`); }
+  }
+  box.className = "progress " + (errs.length ? "failed" : "ok");
+  box.textContent = `Đã tải lên ${ok}/${files.length} bài.` + (errs.length ? " Lỗi: " + errs.join("; ") : "");
+  $("mFile").value = "";
+  loadMusic();
+}
+(() => {   // kéo thả file vào thư viện (máy tính)
+  const d = $("mDrop");
+  d.addEventListener("dragover", e => { e.preventDefault(); d.classList.add("drag"); });
+  d.addEventListener("dragleave", () => d.classList.remove("drag"));
+  d.addEventListener("drop", e => { e.preventDefault(); d.classList.remove("drag"); mUpload(e.dataTransfer.files); });
+})();
+
+// ---------------- Tabs
+const TAB_LOAD = {
+  music: () => loadMusic(),
+  camera: () => camStart(),
+  traffic: () => loadTraffic(),
+  wifi: () => loadWifiStatus(),
+  lan: () => { loadLan(); loadClients(); },
+  log: () => loadLog(),
+};
+function showTab(name) {
+  const allowed = [...document.querySelectorAll("#tabs button")].filter(b => isLocal || !b.classList.contains("local-only"))
+                                                                .map(b => b.dataset.tab);
+  if (!allowed.includes(name)) name = "overview";
+  if (name !== "camera") camStop();
+  document.querySelectorAll("#tabs button").forEach(b => b.classList.toggle("on", b.dataset.tab === name));
+  document.querySelectorAll("section.tab").forEach(s => s.classList.toggle("on", s.dataset.tab === name));
+  if (location.hash.slice(1) !== name) history.replaceState(null, "", name === "overview" ? location.pathname : "#" + name);
+  (TAB_LOAD[name] || (() => {}))();
+}
+document.querySelectorAll("#tabs button").forEach(b => b.addEventListener("click", () => showTab(b.dataset.tab)));
+window.addEventListener("hashchange", () => showTab(location.hash.slice(1)));
+
+// ---------------- Đăng nhập
+let who = {};
+function showLogin() {
+  camStop();
+  $("app").style.display = "none"; $("loginScreen").style.display = "flex";
+  $("loginNote").textContent = who.password_set === false
+    ? "Chủ board chưa đặt mật khẩu truy cập từ xa. Hãy đặt trong tab Hệ thống khi đang ở mạng nội bộ."
+    : "Nhập mật khẩu để vào bảng điều khiển.";
+  $("loginPw").focus();
+}
+async function doLogin() {
+  const b = $("btnLogin"); b.disabled = true; $("loginErr").textContent = "";
+  try { await api("/api/login", {password: $("loginPw").value}); location.reload(); }
+  catch (e) { $("loginErr").textContent = e.message; $("loginPw").select(); }
+  finally { b.disabled = false; }
+}
+async function doLogout() {
+  try { await api("/api/logout", {}); } catch {}
+  location.reload();
+}
+function showPwState() {
+  $("pwState").textContent = who.password_set ? "✅ Đã đặt mật khẩu." : "⚠️ Chưa đặt mật khẩu: chưa ai vào được qua link công khai.";
+  // Đổi mật khẩu khi đang ở ngoài phải nhập mật khẩu cũ; trong mạng nội bộ thì không cần.
+  $("pwCurWrap").style.display = !who.local && who.password_set ? "" : "none";
+}
+async function savePassword() {
+  if ($("pwNew").value !== $("pwNew2").value) return toast("Hai lần nhập mật khẩu mới không khớp");
+  try {
+    await api("/api/password", {new: $("pwNew").value, current: $("pwCur").value});
+    ["pwCur", "pwNew", "pwNew2"].forEach(id => $(id).value = "");
+    who.password_set = true; showPwState(); toast("Đã lưu mật khẩu");
+  } catch (e) { toast("Lỗi: " + e.message); }
+}
+
+async function init() {
+  try { who = await api("/api/whoami"); } catch {}
+  if (!who.admin) return showLogin();
+  isLocal = true;   // có toàn quyền (trong mạng nội bộ, hoặc đã đăng nhập từ xa)
+  $("app").style.display = "";
+  $("app").classList.remove("locked");
+  $("who").textContent = who.local ? "Mạng nội bộ — toàn quyền" : "Qua Internet — đã đăng nhập";
+  $("who").className = "badge " + (who.local ? "local" : "public");
+  $("btnLogout").style.display = who.authed && !who.local ? "" : "none";
+  showPwState();
+  showTab(location.hash.slice(1));
+  mSetOut(mOut);   // nếu đang chọn "Loa board" thì hiện ngay bài board đang phát
+  refresh(); loadUrl();
+  setInterval(refresh, 2000);
+  if (isLocal) {
+    loadClients(); loadLog(); loadLan(); setInterval(loadClients, 10000);
+    const s = await loadWifiStatus();
+    if (s && s.job.state === "running") watchWifi();
+    setInterval(loadWifiStatus, 10000);
+  }
+}
+init();
+</script>
+</body>
+</html>

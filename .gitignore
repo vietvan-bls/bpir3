@@ -1,3 +1,10 @@
+# Thư mục build tạm
 work/
-/*.img
 out/openwrt/
+
+# Firmware image: file lớn (~80 MB), tải lại từ firmware-selector.openwrt.org
+/*.img
+/*.img.gz
+/*.bin
+/*.itb
+backup/

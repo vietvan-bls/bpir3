@@ -1,0 +1,24 @@
+#!/bin/sh /etc/rc.common
+# Cloudflare quick tunnel: đưa server cổng 8080 ra Internet qua link https://xxx.trycloudflare.com
+# Không cần tài khoản. Link đổi mỗi lần dịch vụ khởi động lại.
+# Xem link hiện tại:  service cftunnel url
+# Cài vào /etc/init.d/cftunnel, quản lý bằng: service cftunnel start|stop|restart|enable|disable
+
+START=99
+USE_PROCD=1
+LOG=/tmp/cftunnel.log
+EXTRA_COMMANDS="url"
+EXTRA_HELP="	url	In ra link công khai hiện tại"
+
+start_service() {
+	: > "$LOG"
+	procd_open_instance
+	procd_set_param command /usr/bin/cloudflared tunnel --no-autoupdate \
+		--url http://127.0.0.1:8080 --logfile "$LOG"
+	procd_set_param respawn 3600 10 0
+	procd_close_instance
+}
+
+url() {
+	grep -o 'https://[a-z0-9-]*\.trycloudflare\.com' "$LOG" | tail -1
+}
