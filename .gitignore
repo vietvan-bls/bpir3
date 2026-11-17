@@ -8,3 +8,7 @@ out/openwrt/
 /*.bin
 /*.itb
 backup/
+
+# Python
+__pycache__/
+*.pyc
