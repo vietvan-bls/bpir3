@@ -1,0 +1,6 @@
+# thiết bị: ghi/đọc trong iot/#
+user iot
+topic readwrite iot/#
+# backend: đọc/ghi mọi topic
+user server
+topic readwrite #

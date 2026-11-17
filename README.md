@@ -32,7 +32,7 @@ Thư mục trong repo:
 | Thành phần | Ghi chú |
 |---|---|
 | Gói | `luci python3-light python3-urllib python3-logging python3-numpy python3-openssl ffmpeg cloudflared nlbwmon minidlna kmod-usb-audio alsa-utils` + gói mở rộng thẻ nhớ |
-| Dịch vụ tự chạy | `myserver` (web 8080), `cftunnel` (link web công khai), `sshtunnel` (SSH từ xa), `minidlna`, `nlbwmon` |
+| Dịch vụ tự chạy | `myserver` (web 8080), `cftunnel` (link web công khai), `sshtunnel` (SSH từ xa), `mosquitto` (MQTT 1883), `minidlna`, `nlbwmon` |
 | `/mnt/data` | phân vùng p8 ~57 GB: `camera/`, `music/`, `traffic/`, `nlbwmon/` |
 | dropbear | `main`: cổng 22, mọi interface, cho mật khẩu + khóa; `remote`: `127.0.0.1:2222`, chỉ khóa (cho SSH từ xa) |
 | dnsmasq | ghi log truy vấn vào `/tmp/dnsmasq.log` (thống kê truy cập) |
@@ -226,6 +226,27 @@ Mở `http://192.168.2.1:8080` từ mạng của board (hoặc qua link công kh
 - Bắt mạng 5 GHz ở kênh DFS (52–144) sẽ làm Wi-Fi `BPI-R3-5G` tắt (không dò radar được khi radio đang bắt mạng),
   nên ưu tiên bắt mạng 2.4 GHz.
 - Đèn LED, danh sách máy đang bắt Wi-Fi, log, tạo link công khai mới, khởi động lại server/board.
+
+## MQTT broker (IoT)
+
+Mosquitto chạy trên board, cổng **1883**, chỉ vào được từ mạng của board (Wi-Fi `BPI-R3`, `192.168.2.x`);
+firewall chặn từ WAN/Internet. Cài / cài lại: chép `server/` lên board rồi `sh mqtt-setup.sh`.
+
+| Tài khoản | Dùng cho | Quyền |
+|---|---|---|
+| `iot` | Thiết bị (ESP32, cảm biến…) | đọc/ghi `iot/#` |
+| `server` | Backend trên board | mọi topic; mật khẩu trong `/etc/bpi-mqtt.json` |
+
+- Cấu hình: [server/mosquitto/mosquitto.conf](server/mosquitto/mosquitto.conf), quyền: [server/mosquitto/acl](server/mosquitto/acl).
+- Mật khẩu `iot` được in ra lúc cài; đổi: `mosquitto_passwd -b /etc/mosquitto/passwd iot <mk_mới> && service mosquitto restart`.
+  Tạo lại cả hai: `sh mqtt-setup.sh --reset`.
+- Trạng thái (tin giữ lại, phiên) lưu ở `/mnt/data/mosquitto/`. Log: `logread -e mosquitto`.
+
+```sh
+# thử từ một máy trong mạng 192.168.2.x
+mosquitto_sub -h 192.168.2.1 -u iot -P <mật_khẩu> -t 'iot/#' -v
+mosquitto_pub -h 192.168.2.1 -u iot -P <mật_khẩu> -t iot/phong-khach/nhiet-do -m 25.5
+```
 
 ## Truy cập từ Internet (Cloudflare quick tunnel)
 
