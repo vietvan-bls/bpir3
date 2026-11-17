@@ -768,8 +768,18 @@ class Handler(BaseHTTPRequestHandler):
             return False
         return any(ip in n for n in LOCAL_NETS)
 
+    def via_proxy(self):
+        """Request đi qua Cloudflare Tunnel hoặc Tailscale Funnel (cả hai đều tới từ 127.0.0.1, là HTTPS)."""
+        return bool(self.headers.get("Cf-Connecting-IP")) or (
+            self.client_address[0] in ("127.0.0.1", "::1") and bool(self.headers.get("X-Forwarded-For")))
+
     def client_ip(self):
-        return self.headers.get("Cf-Connecting-IP") or self.client_address[0]
+        # IP thật của người dùng (để khóa đúng người khi sai mật khẩu nhiều lần).
+        if self.headers.get("Cf-Connecting-IP"):
+            return self.headers["Cf-Connecting-IP"]
+        if self.via_proxy():
+            return self.headers["X-Forwarded-For"].split(",")[0].strip()
+        return self.client_address[0]
 
     def session_token(self, name=COOKIE):
         c = cookies.SimpleCookie()
@@ -791,7 +801,7 @@ class Handler(BaseHTTPRequestHandler):
         return self.is_local() or self.is_authed()
 
     def cookie_header(self, token, max_age, name=COOKIE):
-        secure = "; Secure" if self.headers.get("Cf-Connecting-IP") else ""  # qua tunnel là HTTPS
+        secure = "; Secure" if self.via_proxy() else ""  # qua tunnel/Funnel là HTTPS
         return f"{name}={token}; Path=/; Max-Age={max_age}; HttpOnly; SameSite=Strict{secure}"
 
     def _send(self, code, body, ctype="application/json", headers=None):

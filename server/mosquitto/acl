@@ -4,3 +4,6 @@ topic readwrite iot/#
 # backend: đọc/ghi mọi topic
 user server
 topic readwrite #
+
+# thiết bị ở xa (qua Tailscale Funnel): mỗi tài khoản chỉ dùng iot/<tên tài khoản>/#
+pattern readwrite iot/%u/#

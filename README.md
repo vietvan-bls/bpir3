@@ -266,6 +266,32 @@ mosquitto_sub -h 192.168.2.1 -u iot -P <mật_khẩu> -t 'iot/#' -v
 mosquitto_pub -h 192.168.2.1 -u iot -P <mật_khẩu> -t iot/phong-khach/nhiet-do -m 25.5
 ```
 
+## Tên cố định qua Tailscale Funnel (`bpi-r3.tail24dd60.ts.net`)
+
+Funnel (miễn phí) cho board một tên cố định có HTTPS, không cần tên miền, không mở cổng router.
+Cài: [server/tailscale-funnel.sh](server/tailscale-funnel.sh) (lần đầu in link đăng nhập Tailscale và link bật Funnel).
+
+| Địa chỉ | Tới |
+|---|---|
+| `https://bpi-r3.tail24dd60.ts.net` | web server 8080 (trang quản trị, `/iot`, LuCI) |
+| `bpi-r3.tail24dd60.ts.net:8443` (TLS) | MQTT 1883, cho thiết bị ở xa |
+
+- Tailscale chạy với `--accept-dns=false --netfilter-mode=off`: không đổi DNS/firewall của board.
+- Server lấy IP thật của người dùng từ `X-Forwarded-For` (để khóa đúng người khi sai mật khẩu).
+- Tắt: `tailscale funnel --https=443 off`, `tailscale funnel --tls-terminated-tcp=8443 off`; gỡ hẳn: `apk del tailscale`.
+- **Đang có lỗi phía Tailscale (2026-11-18)**: tên miền trỏ tới 2 IP; IP qua máy chủ ingress thế hệ mới
+  (`fd7a:115c:a1e0:ab12:…`) bị bộ lọc gói của Tailscale trên board chặn ("no rules matched"), nên khoảng một nửa số
+  kết nối bị ngắt lúc bắt tay TLS. ESP32 mẫu tự thử lại nên vẫn kết nối được sau vài lần.
+
+### Thiết bị ở xa (ESP32) qua MQTT/TLS
+
+- Mỗi thiết bị một tài khoản: `sh /root/server/mqtt-add-device.sh <tên>` (in ra mật khẩu), chỉ dùng được
+  `iot/<tên>/#` (quy tắc `pattern` trong [server/mosquitto/acl](server/mosquitto/acl)). Xóa: `... <tên> --delete`.
+  Lưu ý: `mqtt-setup.sh --reset` tạo lại file mật khẩu nên xóa luôn các tài khoản này.
+- Code mẫu: [firmware/esp32-mqtt/esp32-mqtt.ino](firmware/esp32-mqtt/esp32-mqtt.ino) (PubSubClient + WiFiClientSecure,
+  có sẵn ISRG Root X1/X2, LWT online/offline, nhận lệnh `iot/<tên>/set` bật tắt LED, gửi JSON mỗi 10 giây).
+  Chép `secrets.example.h` thành `secrets.h` rồi điền Wi-Fi và tài khoản.
+
 ## Truy cập từ Internet (Cloudflare quick tunnel)
 
 Dịch vụ `cftunnel` ([server/cftunnel.init](server/cftunnel.init)) chạy `cloudflared` để đưa cổng 8080
