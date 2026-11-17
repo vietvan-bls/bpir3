@@ -82,3 +82,36 @@ sudo dd if=out/fip.bin of=/dev/sdX bs=512 seek=13312 conv=notrunc,fsync
 1. Gạt switch boot (SW1) sang chế độ **SD** (theo bảng boot-select trên wiki BPI-R3).
 2. Cắm UART debug (115200 8N1, 3.3V) để xem log BL2 → BL31 → U-Boot.
 3. U-Boot dùng bootstd/distro boot: đặt `extlinux/extlinux.conf` + kernel + dtb (`mt7986a-bananapi-bpi-r3.dtb`) vào phân vùng boot để tự boot Linux.
+
+## 6. Build OpenWrt
+
+Dùng ImageBuilder chính thức (ghép package có sẵn, mất vài phút, không cần build từ source):
+
+```bash
+sudo apt-get install -y build-essential libncurses-dev zlib1g-dev gawk gettext libssl-dev xsltproc rsync wget unzip python3 zstd file
+```
+
+```bash
+./openwrt.sh
+```
+
+- Đổi phiên bản: `OWRT_VER=25.12.6 ./openwrt.sh`
+- Thêm/bớt package (`-pkg` để bỏ): `PACKAGES="luci luci-ssl wireguard-tools -ppp" ./openwrt.sh`
+- Đưa sẵn cấu hình vào rootfs: `FILES_DIR=files ./openwrt.sh` (ví dụ `files/etc/config/network`)
+
+Kết quả trong `out/openwrt/` (không commit, file lớn):
+
+| File | Dùng cho |
+|---|---|
+| `*-bpi-r3-sdcard.img.gz` | ghi thẳng ra thẻ SD |
+| `*-bpi-r3-squashfs-sysupgrade.itb` | nâng cấp từ OpenWrt đang chạy (`sysupgrade`) |
+| `*-bpi-r3-{emmc,snand,nor}-preloader.bin` / `*-bl31-uboot.fip` | bootloader để cài lên eMMC/NAND/NOR |
+
+Ghi thẻ SD:
+
+```bash
+gunzip -c out/openwrt/openwrt-*-bananapi_bpi-r3-sdcard.img.gz | sudo dd of=/dev/sdX bs=4M conv=fsync status=progress
+```
+
+Gạt switch boot sang SD, cắm mạng vào cổng LAN, truy cập `http://192.168.1.1` (LuCI, user `root`, chưa có mật khẩu).
+Từ image SD, U-Boot của OpenWrt có menu để cài OpenWrt sang NAND/eMMC.
