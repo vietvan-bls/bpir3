@@ -41,6 +41,19 @@ Quyền truy cập:
   GET  /api/traffic?day=YYYY-MM-DD   máy nào vào trang nào trong ngày (log DNS, traffic.py) + dung lượng (nlbwmon)
   GET  /api/traffic/recent?mac=&since=  các tên miền vừa truy cập
 
+IoT (iot.py, trang /iot): mật khẩu riêng, khác mật khẩu quản trị. Quản trị viên (trong mạng nội bộ hoặc đã
+đăng nhập) cũng vào được; người chỉ có mật khẩu IoT thì chỉ vào được /iot và /api/iot/*.
+  GET  /iot                      trang IoT
+  GET  /api/iot/whoami           {iot, admin, password_set}
+  POST /api/iot/login {"password"} / POST /api/iot/logout
+  POST /api/iot/password {"new"}  đặt mật khẩu IoT (chỉ quản trị viên; "new" rỗng = xóa mật khẩu)
+  GET  /api/iot/devices          thiết bị + giá trị mới nhất + trạng thái broker
+  GET  /api/iot/history?topic=&range=1h|6h|24h|7d|30d
+  GET  /api/iot/controls         POST /api/iot/controls {"items": [...]}  lưu danh sách nút điều khiển
+  POST /api/iot/control {"id", "value"?}    bấm nút điều khiển
+  POST /api/iot/publish {"topic", "payload", "retain"?}   gửi tin MQTT (topic iot/...)
+  POST /api/iot/delete-device {"id"}        xóa dữ liệu của một thiết bị
+
 Mọi POST bắt buộc có header "X-BPI: 1". Trình duyệt không cho trang web lạ tự gắn header này
 khi gửi sang board (CORS), và cookie phiên là SameSite=Strict, nên trang độc hại không bấm hộ được.
 """
@@ -620,6 +633,16 @@ except Exception as e:  # noqa: BLE001
     TRAFFIC = None
 
 
+# ---------------------------------------------------------------- IoT / MQTT (iot.py)
+import iot as _iot
+IOT_AUTH = _iot.Auth()
+try:
+    IOT = _iot.IoT()
+except Exception as e:  # noqa: BLE001
+    print(f"IoT tắt: {e}", flush=True)
+    IOT = None
+
+
 # ---------------------------------------------------------------- Đăng nhập (truy cập từ Internet)
 AUTH_FILE = "/etc/bpi-web-auth.json"   # nằm trong overlay, giữ qua khởi động lại
 SESSION_DAYS = 7
@@ -748,13 +771,17 @@ class Handler(BaseHTTPRequestHandler):
     def client_ip(self):
         return self.headers.get("Cf-Connecting-IP") or self.client_address[0]
 
-    def session_token(self):
+    def session_token(self, name=COOKIE):
         c = cookies.SimpleCookie()
         try:
             c.load(self.headers.get("Cookie", ""))
         except cookies.CookieError:
             return ""
-        return c[COOKIE].value if COOKIE in c else ""
+        return c[name].value if name in c else ""
+
+    def is_iot(self):
+        """Vào được trang IoT: quản trị viên, hoặc đã đăng nhập bằng mật khẩu IoT."""
+        return self.is_admin() or IOT_AUTH.valid(self.session_token(IOT_AUTH.COOKIE))
 
     def is_authed(self):
         return session_valid(self.session_token())
@@ -763,9 +790,9 @@ class Handler(BaseHTTPRequestHandler):
         """Trong mạng nội bộ: luôn có quyền. Qua Internet: phải đăng nhập."""
         return self.is_local() or self.is_authed()
 
-    def cookie_header(self, token, max_age):
+    def cookie_header(self, token, max_age, name=COOKIE):
         secure = "; Secure" if self.headers.get("Cf-Connecting-IP") else ""  # qua tunnel là HTTPS
-        return f"{COOKIE}={token}; Path=/; Max-Age={max_age}; HttpOnly; SameSite=Strict{secure}"
+        return f"{name}={token}; Path=/; Max-Age={max_age}; HttpOnly; SameSite=Strict{secure}"
 
     def _send(self, code, body, ctype="application/json", headers=None):
         if not isinstance(body, (str, bytes)):
@@ -861,7 +888,8 @@ class Handler(BaseHTTPRequestHandler):
                 if k.lower() not in HOP_HEADERS and not k.lower().startswith("cf-")}
         # Không gửi cookie phiên của web panel sang LuCI.
         if "Cookie" in hdrs:
-            hdrs["Cookie"] = "; ".join(c for c in hdrs["Cookie"].split("; ") if not c.startswith(COOKIE + "="))
+            hdrs["Cookie"] = "; ".join(c for c in hdrs["Cookie"].split("; ")
+                                       if not c.startswith((COOKIE + "=", IOT_AUTH.COOKIE + "=")))
         hdrs["Host"] = "127.0.0.1"
         hdrs["X-Forwarded-For"] = self.client_ip()
         try:
@@ -956,11 +984,65 @@ class Handler(BaseHTTPRequestHandler):
     def need_login(self):
         self._send(401, {"error": "Cần đăng nhập", "login": True})
 
+    def iot_get(self, path, q):
+        if path == "/api/iot/whoami":
+            return self._send(200, {"iot": self.is_iot(), "admin": self.is_admin(), "local": self.is_local(),
+                                    "password_set": IOT_AUTH.is_set()})
+        if not self.is_iot():
+            return self.need_login()
+        if IOT is None:
+            return self._send(503, {"error": "IoT chưa bật (xem log server)"})
+        if path == "/api/iot/devices":
+            return self._send(200, IOT.devices())
+        if path == "/api/iot/history":
+            return self._send(200, IOT.history(q.get("topic", [""])[0], q.get("range", ["24h"])[0]))
+        if path == "/api/iot/controls":
+            return self._send(200, IOT.controls())
+        return self._send(404, {"error": "not found"})
+
+    def iot_post(self, path, body):
+        if path == "/api/iot/login":
+            token = IOT_AUTH.login(self.client_ip(), str(body.get("password", "")))
+            return self._send(200, {"ok": True}, headers={
+                "Set-Cookie": self.cookie_header(token, IOT_AUTH.SESSION_DAYS * 86400, IOT_AUTH.COOKIE)})
+        if path == "/api/iot/logout":
+            IOT_AUTH.logout(self.session_token(IOT_AUTH.COOKIE))
+            return self._send(200, {"ok": True}, headers={"Set-Cookie": self.cookie_header("", 0, IOT_AUTH.COOKIE)})
+        if path == "/api/iot/password":
+            if not self.is_admin():
+                raise PermissionError("Chỉ quản trị viên mới đổi được mật khẩu IoT")
+            new = str(body.get("new", ""))
+            IOT_AUTH.set_password(new) if new else IOT_AUTH.clear_password()
+            return self._send(200, {"ok": True, "password_set": IOT_AUTH.is_set()})
+        if not self.is_iot():
+            return self.need_login()
+        if IOT is None:
+            raise OSError("IoT chưa bật (xem log server)")
+        if path == "/api/iot/controls":
+            return self._send(200, IOT.save_controls(body.get("items")))
+        if path == "/api/iot/control":
+            return self._send(200, IOT.run_control(str(body.get("id", "")), body.get("value")))
+        if path == "/api/iot/publish":
+            IOT.publish(body.get("topic", ""), body.get("payload", ""), body.get("retain"))
+            return self._send(200, {"ok": True})
+        if path == "/api/iot/delete-device":
+            IOT.delete_device(str(body.get("id", "")))
+            return self._send(200, {"ok": True})
+        return self._send(404, {"error": "not found"})
+
     def do_GET(self):
         url = urlparse(self.path)
         path, q = url.path, parse_qs(url.query)
         if path.startswith(LUCI_PREFIXES):
             return self.proxy_luci()
+        if path in ("/iot", "/iot.html"):
+            with open(os.path.join(HERE, "iot.html"), "rb") as f:
+                return self._send(200, f.read(), "text/html")
+        if path.startswith("/api/iot/"):
+            try:
+                return self.iot_get(path, q)
+            except ValueError as e:
+                return self._send(400, {"error": str(e)})
         if path not in PUBLIC_PATHS and not self.is_admin():
             return self.need_login()
         if path in ("/", "/index.html"):
@@ -1052,6 +1134,8 @@ class Handler(BaseHTTPRequestHandler):
             return self._send(400, {"error": "thiếu header X-BPI"})
 
         try:
+            if url.path.startswith("/api/iot/"):
+                return self.iot_post(url.path, body)
             if self.path == "/api/login":
                 token = try_login(self.client_ip(), str(body.get("password", "")))
                 return self._send(200, {"ok": True},
@@ -1106,7 +1190,7 @@ class Handler(BaseHTTPRequestHandler):
     def log_message(self, fmt, *args):
         # Bỏ log các lần trang tự cập nhật trạng thái để log dễ đọc.
         if any(p in (str(args[0]) if args else "") for p in ("/api/status", "/camera.jpg", "/api/traffic/recent", "/luci-static/",
-                                                                   "GET /api/speaker")):
+                                                                   "GET /api/speaker", "GET /api/iot/devices")):
             return
         super().log_message(fmt, *args)
 
@@ -1131,6 +1215,8 @@ if __name__ == "__main__":
                 TRAFFIC.flush()
             if SPEAKER:
                 SPEAKER.shutdown()
+            if IOT:
+                IOT.flush()
         finally:
             os._exit(0)
     signal.signal(signal.SIGTERM, _stop)

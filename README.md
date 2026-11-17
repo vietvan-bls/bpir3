@@ -242,6 +242,24 @@ firewall chặn từ WAN/Internet. Cài / cài lại: chép `server/` lên board
   Tạo lại cả hai: `sh mqtt-setup.sh --reset`.
 - Trạng thái (tin giữ lại, phiên) lưu ở `/mnt/data/mosquitto/`. Log: `logread -e mosquitto`.
 
+### Trang IoT (`/iot`, [server/iot.py](server/iot.py), [server/iot.html](server/iot.html))
+
+Trang riêng cho IoT, **mật khẩu riêng** (khác mật khẩu quản trị): người có mật khẩu IoT chỉ xem dữ liệu và bấm
+điều khiển, không vào được phần quản trị board / LuCI. Quản trị viên (trong mạng hoặc đã đăng nhập) vào được cả hai,
+và là người duy nhất đặt/đổi mật khẩu IoT (tab ⚙️ Cài đặt của trang IoT).
+
+- Mở: `http://192.168.2.1:8080/iot` hoặc `<link công khai>/iot` (nút **📡 IoT** trên trang chính).
+- **📊 Thiết bị**: gom topic theo `iot/<thiết bị>/…`, giá trị mới nhất, online/offline, bấm vào giá trị để xem
+  biểu đồ 1 giờ → 30 ngày (trung bình + dải thấp/cao nhất).
+- **🎛 Điều khiển**: tự tạo công tắc / nút bấm / thanh trượt; mỗi nút gửi payload vào topic lệnh
+  (vd `iot/den/set` → `on`), trạng thái lấy từ topic trạng thái nếu có. Có ô gửi tin thủ công.
+- Backend đăng ký `iot/#` bằng tài khoản `server` (`/etc/bpi-mqtt.json`), lưu SQLite `/mnt/data/iot/iot.db`
+  (ghi gộp mỗi 5 giây cho đỡ hao thẻ nhớ, giữ 30 ngày). Danh sách nút: `/mnt/data/iot/controls.json`.
+- Payload nhận: số, `on/off/true/false`, chữ, hoặc JSON (tách thành từng giá trị, vd `iot/vuon` →
+  `{"do_am_dat": 41, "pin": {"v": 3.7}}` thành `iot/vuon/do_am_dat`, `iot/vuon/pin/v`). Tin `…/set` không bị lưu.
+- Mật khẩu IoT: băm PBKDF2 trong `/etc/bpi-iot-auth.json`, phiên 30 ngày (cookie `bpi_iot`), sai 5 lần → khóa 5 phút.
+- API: xem đầu [server/app.py](server/app.py) (`/api/iot/*`).
+
 ```sh
 # thử từ một máy trong mạng 192.168.2.x
 mosquitto_sub -h 192.168.2.1 -u iot -P <mật_khẩu> -t 'iot/#' -v

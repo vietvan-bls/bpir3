@@ -1,0 +1,455 @@
+<!doctype html>
+<html lang="vi">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>BPI-R3 IoT</title>
+<style>
+  :root {
+    --bg: #f4f5f7; --card: #fff; --text: #1d1f23; --muted: #6b7280; --line: #e5e7eb;
+    --accent: #0d9488; --accent-text: #fff; --ok: #15803d; --warn: #b45309; --bad: #b91c1c;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #0f1115; --card: #1a1d23; --text: #e5e7eb; --muted: #9ca3af; --line: #2a2f38;
+      --accent: #14b8a6; --ok: #22c55e; --warn: #f59e0b; --bad: #f87171;
+    }
+  }
+  * { box-sizing: border-box; }
+  body { font-family: system-ui, -apple-system, "Segoe UI", sans-serif; background: var(--bg); color: var(--text);
+         margin: 0; padding: 16px; }
+  main { max-width: 960px; margin: 0 auto; }
+  header { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: 12px; }
+  h1 { font-size: 1.35rem; margin: 0; }
+  h2 { font-size: 1rem; margin: 0 0 12px; }
+  h3 { font-size: .95rem; margin: 0; }
+  a { color: var(--accent); }
+  .badge { font-size: .75rem; padding: 3px 9px; border-radius: 999px; background: var(--line); color: var(--muted); }
+  .badge.ok { background: color-mix(in srgb, var(--ok) 18%, transparent); color: var(--ok); }
+  .badge.bad { background: color-mix(in srgb, var(--bad) 18%, transparent); color: var(--bad); }
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 14px; }
+  .section { margin-bottom: 12px; }
+  .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 12px; }
+  .label { font-size: .78rem; color: var(--muted); }
+  .row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+  .spacer { flex: 1; }
+  button { font: inherit; font-size: .9rem; padding: 8px 14px; border-radius: 8px; border: 1px solid var(--line);
+           background: var(--card); color: var(--text); cursor: pointer; }
+  button:hover:not(:disabled) { border-color: var(--accent); }
+  button.primary, button.active { background: var(--accent); color: var(--accent-text); border-color: var(--accent); }
+  button.danger { color: var(--bad); }
+  button.small { padding: 4px 10px; font-size: .8rem; }
+  button:disabled { opacity: .45; cursor: not-allowed; }
+  .note { font-size: .85rem; color: var(--muted); margin: 8px 0 0; }
+  .inp { width: 100%; font: inherit; padding: 8px 10px; border-radius: 8px; border: 1px solid var(--line);
+         background: var(--bg); color: var(--text); margin-top: 4px; }
+  code { font-family: ui-monospace, Consolas, monospace; font-size: .85em; background: var(--bg); padding: 1px 5px; border-radius: 4px; }
+  pre { background: #0f172a; color: #e2e8f0; padding: 12px; border-radius: 8px; font-size: .78rem; overflow: auto; }
+  .dot { width: 10px; height: 10px; border-radius: 50%; background: var(--muted); display: inline-block; flex: 0 0 auto; }
+  .dot.ok { background: var(--ok); box-shadow: 0 0 6px var(--ok); }
+  .tabs { position: sticky; top: 0; z-index: 5; display: flex; gap: 4px; overflow-x: auto; background: var(--bg);
+          padding: 6px 0 10px; margin-bottom: 8px; border-bottom: 1px solid var(--line); }
+  .tabs button { flex: 0 0 auto; border: none; background: transparent; color: var(--muted); font-weight: 500; }
+  .tabs button.on { background: var(--card); color: var(--accent); box-shadow: 0 1px 3px rgba(0,0,0,.08); }
+  .tab { display: none; } .tab.on { display: block; }
+  /* thiết bị */
+  .dev-head { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
+  .metric { display: flex; align-items: baseline; gap: 8px; padding: 8px 6px; border-radius: 8px; cursor: pointer; }
+  .metric:hover, .metric.sel { background: var(--bg); }
+  .metric .mname { flex: 1; color: var(--muted); font-size: .88rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .metric .mval { font-size: 1.25rem; font-weight: 600; font-variant-numeric: tabular-nums; }
+  .metric .mago { font-size: .72rem; color: var(--muted); min-width: 52px; text-align: right; }
+  .empty { text-align: center; padding: 32px 12px; color: var(--muted); }
+  #chart { width: 100%; height: 240px; display: block; }
+  /* điều khiển */
+  .ctl { display: flex; flex-direction: column; gap: 10px; }
+  .ctl .top { display: flex; align-items: center; gap: 8px; }
+  .ctl .name { flex: 1; font-weight: 600; }
+  .switch { width: 58px; height: 32px; border-radius: 999px; border: none; background: var(--line); position: relative; padding: 0; }
+  .switch::after { content: ""; position: absolute; top: 4px; left: 4px; width: 24px; height: 24px; border-radius: 50%;
+                   background: #fff; transition: left .15s; box-shadow: 0 1px 3px rgba(0,0,0,.3); }
+  .switch.on { background: var(--accent); }
+  .switch.on::after { left: 30px; }
+  input[type=range] { width: 100%; accent-color: var(--accent); }
+  .meta { font-size: .75rem; color: var(--muted); word-break: break-all; }
+  dialog { border: 1px solid var(--line); border-radius: 14px; background: var(--card); color: var(--text);
+           padding: 18px; width: min(420px, calc(100% - 32px)); }
+  dialog::backdrop { background: rgba(0,0,0,.45); }
+  dialog label { display: block; font-size: .82rem; color: var(--muted); margin: 10px 0 2px; }
+  .login { min-height: 90vh; display: flex; align-items: center; justify-content: center; }
+  .login-card { width: min(360px, 100%); }
+  #toast { position: fixed; left: 50%; bottom: 20px; transform: translateX(-50%); background: var(--text); color: var(--bg);
+           padding: 10px 16px; border-radius: 8px; font-size: .9rem; opacity: 0; transition: opacity .2s; pointer-events: none;
+           max-width: calc(100% - 32px); z-index: 50; }
+  #toast.show { opacity: 1; }
+  .admin-only { display: none; } body.admin .admin-only { display: revert; }
+</style>
+</head>
+<body>
+<div id="loginScreen" class="login" style="display:none">
+  <form class="card login-card" onsubmit="event.preventDefault(); doLogin()">
+    <h1 style="margin:0 0 4px">📡 IoT</h1>
+    <p class="note" style="margin:0 0 14px" id="loginNote">Nhập mật khẩu IoT.</p>
+    <input id="loginPw" class="inp" type="password" placeholder="Mật khẩu IoT" autocomplete="current-password" required>
+    <button class="primary" type="submit" id="btnLogin" style="width:100%;margin-top:12px">Đăng nhập</button>
+    <p class="note" id="loginErr" style="color:var(--bad)"></p>
+    <p class="note">Quản trị viên: <a href="/">đăng nhập trang quản trị</a> rồi quay lại đây.</p>
+  </form>
+</div>
+
+<main id="app" style="display:none">
+  <header>
+    <h1>📡 IoT</h1>
+    <span id="broker" class="badge">…</span>
+    <span class="spacer"></span>
+    <a href="/" class="admin-only"><button class="small">← Quản trị board</button></a>
+    <button id="btnLogout" class="small" onclick="doLogout()" style="display:none">Đăng xuất</button>
+  </header>
+  <nav class="tabs" id="tabs">
+    <button data-tab="devices">📊 Thiết bị</button>
+    <button data-tab="controls">🎛 Điều khiển</button>
+    <button data-tab="settings">⚙️ Cài đặt</button>
+  </nav>
+
+  <!-- ================= Thiết bị ================= -->
+  <section class="tab" data-tab="devices">
+    <div class="card section" id="chartCard" style="display:none">
+      <div class="row" style="margin-bottom:8px">
+        <h3 id="chartTitle">…</h3><span class="spacer"></span>
+        <span class="row" id="ranges">
+          <button class="small" data-r="1h">1 giờ</button><button class="small" data-r="6h">6 giờ</button>
+          <button class="small" data-r="24h">24 giờ</button><button class="small" data-r="7d">7 ngày</button>
+          <button class="small" data-r="30d">30 ngày</button>
+        </span>
+        <button class="small" onclick="closeChart()">✕</button>
+      </div>
+      <canvas id="chart"></canvas>
+      <p class="note" id="chartNote"></p>
+    </div>
+    <div class="grid" id="devs"></div>
+  </section>
+
+  <!-- ================= Điều khiển ================= -->
+  <section class="tab" data-tab="controls">
+    <div class="row section">
+      <span class="note" style="margin:0">Mỗi nút gửi một tin MQTT tới thiết bị.</span>
+      <span class="spacer"></span>
+      <button onclick="toggleEdit()" id="btnEdit">✏️ Sửa</button>
+      <button class="primary" onclick="editCtl()">+ Thêm nút</button>
+    </div>
+    <div class="grid" id="ctls"></div>
+    <div class="card section" style="margin-top:12px">
+      <h2>Gửi tin thủ công</h2>
+      <div class="row">
+        <input id="pubTopic" class="inp" style="flex:2 1 200px" placeholder="iot/den-phong/set">
+        <input id="pubPayload" class="inp" style="flex:1 1 120px" placeholder="on">
+        <label class="row" style="gap:4px;font-size:.85rem"><input type="checkbox" id="pubRetain"> giữ lại</label>
+        <button onclick="manualPublish()">Gửi</button>
+      </div>
+    </div>
+  </section>
+
+  <!-- ================= Cài đặt ================= -->
+  <section class="tab" data-tab="settings">
+    <div class="card section admin-only">
+      <h2>Mật khẩu IoT</h2>
+      <p class="note" style="margin:0 0 10px" id="pwState">…</p>
+      <form class="row" onsubmit="event.preventDefault(); savePw()">
+        <input id="pwNew" class="inp" style="flex:1 1 180px" type="password" minlength="6" placeholder="Mật khẩu mới (≥ 6 ký tự)" autocomplete="new-password" required>
+        <button class="primary" type="submit">Lưu</button>
+        <button type="button" class="danger" onclick="clearPw()">Xóa mật khẩu</button>
+      </form>
+      <p class="note">Mật khẩu này chỉ mở được trang IoT (xem dữ liệu, bấm điều khiển), <b>không</b> vào được phần quản trị board.
+        Đổi mật khẩu sẽ đăng xuất mọi máy đang dùng trang IoT. Chỉ quản trị viên đổi được.</p>
+    </div>
+    <div class="card section">
+      <h2>Kết nối thiết bị vào broker</h2>
+      <p class="note" style="margin:0">Broker <code>192.168.2.1:1883</code> (thiết bị phải bắt Wi-Fi <b>BPI-R3</b>), tài khoản <code>iot</code>,
+        chỉ dùng topic <code>iot/…</code>.</p>
+      <pre>iot/&lt;thiết bị&gt;/&lt;giá trị&gt;   25.5 | on | off | chữ
+iot/&lt;thiết bị&gt;              {"nhiet_do": 25.5, "do_am": 60}
+iot/&lt;thiết bị&gt;/status       online | offline   (đặt làm LWT)
+iot/&lt;thiết bị&gt;/set          lệnh từ trang này gửi xuống</pre>
+      <p class="note" id="brokerInfo"></p>
+    </div>
+    <div class="card section">
+      <h2>Xóa dữ liệu thiết bị</h2>
+      <div class="row">
+        <select id="delDev" class="inp" style="flex:1 1 180px"></select>
+        <button class="danger" onclick="deleteDev()">Xóa</button>
+      </div>
+      <p class="note">Xóa lịch sử và giá trị đã lưu của thiết bị (thiết bị gửi tin mới sẽ xuất hiện lại). Dữ liệu tự xóa sau 30 ngày.</p>
+    </div>
+  </section>
+</main>
+
+<dialog id="dlg">
+  <form method="dialog" onsubmit="event.preventDefault(); saveCtl()">
+    <h2 id="dlgTitle">Thêm nút</h2>
+    <label>Tên</label><input id="cName" placeholder="Đèn phòng khách" required>
+    <label>Loại</label>
+    <select id="cKind" onchange="kindUI()">
+      <option value="switch">Công tắc (bật/tắt)</option>
+      <option value="button">Nút bấm (gửi 1 lệnh)</option>
+      <option value="slider">Thanh trượt (gửi số)</option>
+    </select>
+    <label>Topic lệnh</label><input id="cTopic" placeholder="iot/den-phong/set" required>
+    <label>Topic trạng thái (không bắt buộc)</label><input id="cState" placeholder="iot/den-phong/state">
+    <div id="kSwitch"><div class="row" style="gap:8px">
+      <div style="flex:1"><label>Payload bật</label><input id="cOn" value="on"></div>
+      <div style="flex:1"><label>Payload tắt</label><input id="cOff" value="off"></div></div></div>
+    <div id="kButton"><label>Payload</label><input id="cPayload" value="1"></div>
+    <div id="kSlider"><div class="row" style="gap:8px">
+      <div style="flex:1"><label>Min</label><input id="cMin" type="number" value="0"></div>
+      <div style="flex:1"><label>Max</label><input id="cMax" type="number" value="100"></div>
+      <div style="flex:1"><label>Bước</label><input id="cStep" type="number" value="1"></div></div></div>
+    <label class="row" style="gap:6px"><input type="checkbox" id="cRetain" style="width:auto"> Giữ lại tin (retain): thiết bị bật lên nhận lệnh cuối</label>
+    <div class="row" style="margin-top:16px;justify-content:flex-end">
+      <button type="button" onclick="dlg.close()">Hủy</button>
+      <button class="primary" type="submit">Lưu</button>
+    </div>
+  </form>
+</dialog>
+<div id="toast"></div>
+
+<script>
+const $ = (id) => document.getElementById(id);
+const dlg = $("dlg");
+function esc(s) { return String(s ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c])); }
+function toast(msg) {
+  const t = $("toast"); t.textContent = msg; t.classList.add("show");
+  clearTimeout(t._h); t._h = setTimeout(() => t.classList.remove("show"), 3000);
+}
+async function api(path, body) {
+  const opt = body === undefined ? {} : {
+    method: "POST", headers: {"Content-Type": "application/json", "X-BPI": "1"}, body: JSON.stringify(body)};
+  const r = await fetch(path, opt);
+  const j = await r.json().catch(() => ({}));
+  if (r.status === 401 && j.login) { showLogin(); throw new Error("Cần đăng nhập"); }
+  if (!r.ok) throw new Error(j.error || r.statusText);
+  return j;
+}
+function ago(ts, now) {
+  const s = Math.max(0, Math.round((now || Date.now() / 1000) - ts));
+  return s < 60 ? s + " giây" : s < 3600 ? Math.floor(s / 60) + " phút" : s < 86400 ? Math.floor(s / 3600) + " giờ" : Math.floor(s / 86400) + " ngày";
+}
+function fmtVal(m) {
+  if (m.value === null || m.value === undefined) return esc(m.raw);
+  const v = m.value, raw = String(m.raw).toLowerCase();
+  if (["on", "off", "true", "false", "open", "closed"].includes(raw)) return v ? "BẬT" : "TẮT";
+  return Number.isInteger(v) ? v : v.toFixed(Math.abs(v) < 10 ? 2 : 1);
+}
+
+// ---------------- Thiết bị
+let devData = null, chartTopic = null, chartRange = "24h";
+async function loadDevices() {
+  try { devData = await api("/api/iot/devices"); } catch (e) { $("broker").textContent = "Lỗi: " + e.message; return; }
+  const b = $("broker");
+  b.className = "badge " + (devData.connected ? "ok" : "bad");
+  b.textContent = devData.connected ? `Broker ✓ · ${devData.devices.length} thiết bị` : "Broker ✗ " + (devData.error || "");
+  $("brokerInfo").textContent = `Đã nhận ${devData.received} tin từ lúc server chạy · ${devData.topics} topic` +
+    (devData.error ? " · " + devData.error : "");
+  renderDevices();
+  const sel = $("delDev"), cur = sel.value;
+  sel.innerHTML = devData.devices.map(d => `<option>${esc(d.id)}</option>`).join("") || "<option value=''>(chưa có)</option>";
+  if (cur) sel.value = cur;
+}
+function renderDevices() {
+  const d = devData;
+  if (!d.devices.length) {
+    $("devs").innerHTML = `<div class="card empty" style="grid-column:1/-1">Chưa có thiết bị nào gửi dữ liệu.<br>
+      Thử: <code>mosquitto_pub -h 192.168.2.1 -u iot -P &lt;mật khẩu&gt; -t iot/thu/nhiet_do -m 25.5</code></div>`;
+    return;
+  }
+  $("devs").innerHTML = d.devices.map(dev => `
+    <div class="card">
+      <div class="dev-head"><span class="dot ${dev.online ? "ok" : ""}"></span><h3>${esc(dev.id)}</h3>
+        <span class="spacer"></span><span class="label">${dev.online ? "online" : "offline"}${dev.last ? " · " + ago(dev.last, d.now) : ""}</span></div>
+      ${dev.metrics.map(m => `<div class="metric ${m.topic === chartTopic ? "sel" : ""}" onclick='openChart(${esc(JSON.stringify(m.topic))})'
+          title="${esc(m.topic)}"><span class="mname">${esc(m.name)}</span><span class="mval">${fmtVal(m)}</span>
+          <span class="mago">${ago(m.ts, d.now)}</span></div>`).join("") || '<div class="label">Chưa có giá trị</div>'}
+    </div>`).join("");
+}
+async function openChart(topic) {
+  chartTopic = topic; $("chartCard").style.display = ""; $("chartTitle").textContent = topic;
+  renderDevices(); drawChart(null);
+  $("chartCard").scrollIntoView({behavior: "smooth", block: "nearest"});
+  try { drawChart(await api(`/api/iot/history?topic=${encodeURIComponent(topic)}&range=${chartRange}`)); }
+  catch (e) { $("chartNote").textContent = "Lỗi: " + e.message; }
+}
+function closeChart() { chartTopic = null; $("chartCard").style.display = "none"; renderDevices(); }
+document.querySelectorAll("#ranges button").forEach(b => b.addEventListener("click", () => {
+  chartRange = b.dataset.r; if (chartTopic) openChart(chartTopic);
+}));
+function drawChart(h) {
+  document.querySelectorAll("#ranges button").forEach(b => b.classList.toggle("active", b.dataset.r === chartRange));
+  const cv = $("chart"), dpr = window.devicePixelRatio || 1, W = cv.clientWidth, H = cv.clientHeight;
+  cv.width = W * dpr; cv.height = H * dpr;
+  const c = cv.getContext("2d"); c.setTransform(dpr, 0, 0, dpr, 0, 0); c.clearRect(0, 0, W, H);
+  const css = getComputedStyle(document.documentElement);
+  const accent = css.getPropertyValue("--accent").trim(), muted = css.getPropertyValue("--muted").trim(), line = css.getPropertyValue("--line").trim();
+  if (!h) { $("chartNote").textContent = "Đang tải…"; return; }
+  const p = h.points;
+  if (!p.length) { $("chartNote").textContent = "Chưa có dữ liệu số trong khoảng này."; return; }
+  let lo = Math.min(...p.map(x => x[2])), hi = Math.max(...p.map(x => x[3]));
+  if (lo === hi) { lo -= 1; hi += 1; }
+  const pad = (hi - lo) * .08; lo -= pad; hi += pad;
+  const L = 46, R = 8, T = 8, B = 22, t0 = p[0][0], t1 = Math.max(p[p.length - 1][0], t0 + 1);
+  const X = t => L + (t - t0) / (t1 - t0) * (W - L - R), Y = v => T + (hi - v) / (hi - lo) * (H - T - B);
+  c.font = "11px system-ui, sans-serif"; c.fillStyle = muted; c.strokeStyle = line; c.lineWidth = 1;
+  for (let i = 0; i <= 4; i++) {
+    const v = lo + (hi - lo) * i / 4, y = Y(v);
+    c.beginPath(); c.moveTo(L, y); c.lineTo(W - R, y); c.stroke();
+    c.fillText(Math.abs(v) >= 100 ? v.toFixed(0) : v.toFixed(1), 4, y + 4);
+  }
+  const fmtT = t => { const d = new Date(t * 1000);
+    return h.range === "7d" || h.range === "30d" ? `${d.getDate()}/${d.getMonth() + 1}` :
+      d.toLocaleTimeString("vi-VN", {hour: "2-digit", minute: "2-digit"}); };
+  c.fillText(fmtT(t0), L, H - 6); const e = fmtT(t1); c.fillText(e, W - R - c.measureText(e).width, H - 6);
+  // dải min–max
+  c.fillStyle = accent + "33"; c.beginPath();
+  p.forEach((x, i) => i ? c.lineTo(X(x[0]), Y(x[3])) : c.moveTo(X(x[0]), Y(x[3])));
+  for (let i = p.length - 1; i >= 0; i--) c.lineTo(X(p[i][0]), Y(p[i][2]));
+  c.closePath(); c.fill();
+  // trung bình
+  c.strokeStyle = accent; c.lineWidth = 2; c.beginPath();
+  p.forEach((x, i) => i ? c.lineTo(X(x[0]), Y(x[1])) : c.moveTo(X(x[0]), Y(x[1])));
+  c.stroke();
+  if (p.length === 1) { c.fillStyle = accent; c.beginPath(); c.arc(X(p[0][0]), Y(p[0][1]), 3, 0, 7); c.fill(); }
+  const vals = p.map(x => x[1]);
+  $("chartNote").textContent = `${p.length} điểm (mỗi điểm = trung bình ${h.bucket >= 60 ? Math.round(h.bucket / 60) + " phút" : h.bucket + " giây"}) · ` +
+    `thấp nhất ${Math.min(...p.map(x => x[2]))} · cao nhất ${Math.max(...p.map(x => x[3]))} · gần nhất ${vals[vals.length - 1]}`;
+}
+window.addEventListener("resize", () => { if (chartTopic) openChart(chartTopic); });
+
+// ---------------- Điều khiển
+let ctls = [], editing = false, editId = null;
+async function loadControls() {
+  try { ctls = await api("/api/iot/controls"); renderControls(); } catch (e) { $("ctls").innerHTML = `<div class="note">${esc(e.message)}</div>`; }
+}
+function isOn(c) { return c.current != null && String(c.current).toLowerCase() === String(c.on).toLowerCase(); }
+function renderControls() {
+  $("btnEdit").classList.toggle("active", editing);
+  $("ctls").innerHTML = ctls.length ? ctls.map(c => `
+    <div class="card ctl">
+      <div class="top"><span class="name">${esc(c.name)}</span>
+        ${editing ? `<button class="small" onclick="editCtl('${c.id}')">Sửa</button>
+                     <button class="small danger" onclick="delCtl('${c.id}')">Xóa</button>` :
+          c.kind === "switch" ? `<button class="switch ${isOn(c) ? "on" : ""}" onclick="runCtl('${c.id}', ${!isOn(c)})" aria-label="Bật/tắt"></button>` :
+          c.kind === "button" ? `<button class="primary" onclick="runCtl('${c.id}')">Gửi</button>` : ""}
+      </div>
+      ${c.kind === "slider" && !editing ? `<div class="row"><input type="range" min="${c.min}" max="${c.max}" step="${c.step}"
+          value="${c.current != null && !isNaN(+c.current) ? +c.current : c.min}"
+          oninput="this.nextElementSibling.textContent=this.value" onchange="runCtl('${c.id}', +this.value)" style="flex:1">
+          <b style="min-width:42px;text-align:right">${c.current != null && !isNaN(+c.current) ? +c.current : "–"}</b></div>` : ""}
+      <div class="meta">${esc(c.topic)}${c.state ? " · trạng thái " + esc(c.state) : ""}${c.current != null ? " · hiện tại: " + esc(c.current) : ""}</div>
+    </div>`).join("")
+    : `<div class="card empty" style="grid-column:1/-1">Chưa có nút điều khiển nào. Bấm “+ Thêm nút”.</div>`;
+}
+function toggleEdit() { editing = !editing; renderControls(); }
+async function runCtl(id, value) {
+  try { const r = await api("/api/iot/control", {id, value}); toast(`Đã gửi “${r.payload}” → ${r.topic}`); setTimeout(loadControls, 600); }
+  catch (e) { toast("Lỗi: " + e.message); }
+}
+function kindUI() {
+  const k = $("cKind").value;
+  $("kSwitch").style.display = k === "switch" ? "" : "none";
+  $("kButton").style.display = k === "button" ? "" : "none";
+  $("kSlider").style.display = k === "slider" ? "" : "none";
+}
+function editCtl(id) {
+  editId = id || null;
+  const c = ctls.find(x => x.id === id) || {kind: "switch", on: "on", off: "off", payload: "1", min: 0, max: 100, step: 1};
+  $("dlgTitle").textContent = id ? "Sửa nút" : "Thêm nút";
+  $("cName").value = c.name || ""; $("cKind").value = c.kind; $("cTopic").value = c.topic || "iot/";
+  $("cState").value = c.state || ""; $("cOn").value = c.on ?? "on"; $("cOff").value = c.off ?? "off";
+  $("cPayload").value = c.payload ?? "1"; $("cMin").value = c.min ?? 0; $("cMax").value = c.max ?? 100;
+  $("cStep").value = c.step ?? 1; $("cRetain").checked = !!c.retain;
+  kindUI(); dlg.showModal();
+}
+async function saveCtl() {
+  const item = {id: editId, name: $("cName").value, kind: $("cKind").value, topic: $("cTopic").value.trim(),
+    state: $("cState").value.trim(), on: $("cOn").value, off: $("cOff").value, payload: $("cPayload").value,
+    min: +$("cMin").value, max: +$("cMax").value, step: +$("cStep").value, retain: $("cRetain").checked};
+  const items = editId ? ctls.map(c => c.id === editId ? item : c) : [...ctls, item];
+  try { ctls = await api("/api/iot/controls", {items}); dlg.close(); renderControls(); toast("Đã lưu"); }
+  catch (e) { toast("Lỗi: " + e.message); }
+}
+async function delCtl(id) {
+  const c = ctls.find(x => x.id === id);
+  if (!confirm(`Xóa nút “${c.name}”?`)) return;
+  try { ctls = await api("/api/iot/controls", {items: ctls.filter(x => x.id !== id)}); renderControls(); }
+  catch (e) { toast("Lỗi: " + e.message); }
+}
+async function manualPublish() {
+  try {
+    await api("/api/iot/publish", {topic: $("pubTopic").value.trim(), payload: $("pubPayload").value, retain: $("pubRetain").checked});
+    toast("Đã gửi");
+  } catch (e) { toast("Lỗi: " + e.message); }
+}
+
+// ---------------- Cài đặt
+async function savePw() {
+  try { await api("/api/iot/password", {new: $("pwNew").value}); $("pwNew").value = ""; who.password_set = true; showPwState(); toast("Đã lưu mật khẩu IoT"); }
+  catch (e) { toast("Lỗi: " + e.message); }
+}
+async function clearPw() {
+  if (!confirm("Xóa mật khẩu IoT? Mọi người đang dùng trang IoT (không phải quản trị viên) sẽ bị đăng xuất và không vào lại được.")) return;
+  try { await api("/api/iot/password", {new: ""}); who.password_set = false; showPwState(); toast("Đã xóa mật khẩu IoT"); }
+  catch (e) { toast("Lỗi: " + e.message); }
+}
+function showPwState() {
+  $("pwState").textContent = who.password_set ? "✅ Đã đặt mật khẩu IoT." : "⚠️ Chưa đặt: chỉ quản trị viên vào được trang IoT.";
+}
+async function deleteDev() {
+  const id = $("delDev").value; if (!id) return;
+  if (!confirm(`Xóa toàn bộ dữ liệu của “${id}”?`)) return;
+  try { await api("/api/iot/delete-device", {id}); toast("Đã xóa"); if (chartTopic && chartTopic.startsWith(`iot/${id}`)) closeChart(); loadDevices(); }
+  catch (e) { toast("Lỗi: " + e.message); }
+}
+
+// ---------------- Tabs + đăng nhập
+let who = {}, timer = null;
+function showTab(name) {
+  if (!["devices", "controls", "settings"].includes(name)) name = "devices";
+  document.querySelectorAll("#tabs button").forEach(b => b.classList.toggle("on", b.dataset.tab === name));
+  document.querySelectorAll("section.tab").forEach(s => s.classList.toggle("on", s.dataset.tab === name));
+  history.replaceState(null, "", name === "devices" ? location.pathname : "#" + name);
+  if (name === "controls") loadControls();
+}
+document.querySelectorAll("#tabs button").forEach(b => b.addEventListener("click", () => showTab(b.dataset.tab)));
+function showLogin() {
+  clearInterval(timer);
+  $("app").style.display = "none"; $("loginScreen").style.display = "flex";
+  $("loginNote").textContent = who.password_set === false
+    ? "Chưa đặt mật khẩu IoT. Quản trị viên vào trang quản trị rồi mở lại trang này để đặt."
+    : "Nhập mật khẩu IoT.";
+  $("loginPw").focus();
+}
+async function doLogin() {
+  const b = $("btnLogin"); b.disabled = true; $("loginErr").textContent = "";
+  try { await api("/api/iot/login", {password: $("loginPw").value}); location.reload(); }
+  catch (e) { $("loginErr").textContent = e.message; $("loginPw").select(); }
+  finally { b.disabled = false; }
+}
+async function doLogout() { try { await api("/api/iot/logout", {}); } catch {} location.reload(); }
+
+async function init() {
+  try { who = await api("/api/iot/whoami"); } catch {}
+  if (!who.iot) return showLogin();
+  $("app").style.display = "";
+  document.body.classList.toggle("admin", !!who.admin);
+  $("btnLogout").style.display = who.admin ? "none" : "";
+  showPwState();
+  showTab(location.hash.slice(1));
+  loadDevices();
+  timer = setInterval(() => {
+    if (document.hidden) return;
+    loadDevices();
+    if ($("tabs").querySelector(".on")?.dataset.tab === "controls" && !editing && !dlg.open) loadControls();
+  }, 3000);
+}
+init();
+</script>
+</body>
+</html>
