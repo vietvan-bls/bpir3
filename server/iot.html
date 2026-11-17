@@ -173,6 +173,18 @@ iot/&lt;thiết bị&gt;/set          lệnh từ trang này gửi xuống</pre>
       <p class="note" id="brokerInfo"></p>
     </div>
     <div class="card section">
+      <h2>Tài khoản thiết bị (ESP32…)</h2>
+      <form class="row" onsubmit="event.preventDefault(); createAcc()">
+        <input id="accName" class="inp" style="flex:1 1 160px" placeholder="tên, vd esp-vuon" pattern="[a-z0-9][a-z0-9\-]{1,30}"
+               title="chữ thường, số, dấu -" required autocapitalize="off" autocomplete="off">
+        <input id="accNote" class="inp" style="flex:2 1 180px" placeholder="ghi chú (không bắt buộc), vd ESP32 ngoài vườn">
+        <button class="primary" type="submit">+ Tạo tài khoản</button>
+      </form>
+      <div id="accs" style="margin-top:10px"></div>
+      <p class="note">Mỗi tài khoản là một thiết bị: chỉ gửi/nhận được topic <code>iot/&lt;tên&gt;/…</code>, không đụng được thiết bị khác.
+        Mật khẩu chỉ hiện <b>một lần</b> lúc tạo / đổi. Thiết bị đang kết nối không bị ngắt khi thêm tài khoản khác.</p>
+    </div>
+    <div class="card section">
       <h2>Xóa dữ liệu thiết bị</h2>
       <div class="row">
         <select id="delDev" class="inp" style="flex:1 1 180px"></select>
@@ -209,6 +221,17 @@ iot/&lt;thiết bị&gt;/set          lệnh từ trang này gửi xuống</pre>
       <button class="primary" type="submit">Lưu</button>
     </div>
   </form>
+</dialog>
+<dialog id="dlgAcc">
+  <h2 id="accTitle">Tài khoản thiết bị</h2>
+  <p class="note" style="margin:0 0 8px">Lưu lại ngay: mật khẩu <b>không xem lại được</b> (chỉ đổi được).</p>
+  <div id="accInfo"></div>
+  <label style="margin-top:12px">secrets.h cho code mẫu ESP32 (firmware/esp32-mqtt)</label>
+  <pre id="accSecrets" style="white-space:pre-wrap;margin:4px 0 0"></pre>
+  <div class="row" style="margin-top:14px;justify-content:flex-end">
+    <button onclick="copyText($('accSecrets').textContent)">Sao chép secrets.h</button>
+    <button class="primary" onclick="$('dlgAcc').close()">Xong</button>
+  </div>
 </dialog>
 <div id="toast"></div>
 
@@ -401,6 +424,62 @@ async function clearPw() {
 function showPwState() {
   $("pwState").textContent = who.password_set ? "✅ Đã đặt mật khẩu IoT." : "⚠️ Chưa đặt: chỉ quản trị viên vào được trang IoT.";
 }
+// ---- tài khoản thiết bị
+let accData = null;
+async function copyText(t) {
+  try { await navigator.clipboard.writeText(t); toast("Đã sao chép"); }
+  catch { prompt("Sao chép:", t); }
+}
+async function loadAccounts() {
+  try { accData = await api("/api/iot/accounts"); } catch (e) { $("accs").innerHTML = `<div class="note">${esc(e.message)}</div>`; return; }
+  const online = Object.fromEntries((devData?.devices || []).map(d => [d.id, d]));
+  $("accs").innerHTML = accData.accounts.length ? accData.accounts.map(a => {
+    const d = online[a.name];
+    return `<div class="metric" style="cursor:default">
+      <span class="dot ${d && d.online ? "ok" : ""}"></span>
+      <span class="mname" style="color:var(--text)"><b>${esc(a.name)}</b>${a.note ? ` <span class="label">· ${esc(a.note)}</span>` : ""}
+        <div class="label">${d ? (d.online ? "online" : "offline") + (d.last ? " · " + ago(d.last, devData.now) + " trước" : "") : "chưa gửi dữ liệu"}</div></span>
+      <button class="small" onclick="resetAcc('${a.name}')">Đổi mật khẩu</button>
+      <button class="small danger" onclick="delAcc('${a.name}')">Xóa</button></div>`;
+  }).join("") : '<div class="label">Chưa có tài khoản thiết bị nào.</div>';
+}
+function showCreds(r, title) {
+  const host = r.public_host;
+  $("accTitle").textContent = title;
+  $("accInfo").innerHTML = `<table style="width:100%;font-size:.88rem;border-collapse:collapse">
+    <tr><td class="label">User</td><td><code>${esc(r.name)}</code></td></tr>
+    <tr><td class="label">Mật khẩu</td><td><code>${esc(r.password)}</code></td></tr>
+    <tr><td class="label">Ở xa (Internet)</td><td>${host ? `<code>${esc(host)}</code> cổng <code>8443</code> (TLS)` : "chưa bật Tailscale Funnel"}</td></tr>
+    <tr><td class="label">Trong mạng board</td><td><code>${esc(r.lan_host)}</code> cổng <code>1883</code></td></tr>
+    <tr><td class="label">Topic</td><td><code>${esc(r.topic)}/…</code>, lệnh: <code>${esc(r.topic)}/set</code></td></tr></table>`;
+  $("accSecrets").textContent =
+`#pragma once
+#define WIFI_SSID   "ten-wifi"
+#define WIFI_PASS   "mat-khau-wifi"
+#define MQTT_USER   "${r.name}"
+#define MQTT_PASS   "${r.password}"
+#define MQTT_HOST   "${host || r.lan_host}"
+#define MQTT_PORT   ${host ? 8443 : 1883}`;
+  $("dlgAcc").showModal();
+}
+async function createAcc() {
+  try {
+    const r = await api("/api/iot/accounts", {action: "create", name: $("accName").value.trim().toLowerCase(), note: $("accNote").value.trim()});
+    $("accName").value = ""; $("accNote").value = "";
+    showCreds(r, "Đã tạo tài khoản " + r.name); loadAccounts();
+  } catch (e) { toast("Lỗi: " + e.message); }
+}
+async function resetAcc(name) {
+  if (!confirm(`Đổi mật khẩu “${name}”? Thiết bị đang dùng mật khẩu cũ sẽ không kết nối lại được cho tới khi nạp mật khẩu mới.`)) return;
+  try { showCreds(await api("/api/iot/accounts", {action: "reset", name}), "Mật khẩu mới của " + name); }
+  catch (e) { toast("Lỗi: " + e.message); }
+}
+async function delAcc(name) {
+  if (!confirm(`Xóa tài khoản “${name}”? Thiết bị dùng tài khoản này sẽ không kết nối lại được (dữ liệu đã lưu vẫn giữ).`)) return;
+  try { await api("/api/iot/accounts", {action: "delete", name}); toast("Đã xóa " + name); loadAccounts(); }
+  catch (e) { toast("Lỗi: " + e.message); }
+}
+
 async function deleteDev() {
   const id = $("delDev").value; if (!id) return;
   if (!confirm(`Xóa toàn bộ dữ liệu của “${id}”?`)) return;
@@ -416,6 +495,7 @@ function showTab(name) {
   document.querySelectorAll("section.tab").forEach(s => s.classList.toggle("on", s.dataset.tab === name));
   history.replaceState(null, "", name === "devices" ? location.pathname : "#" + name);
   if (name === "controls") loadControls();
+  if (name === "settings") loadAccounts();
 }
 document.querySelectorAll("#tabs button").forEach(b => b.addEventListener("click", () => showTab(b.dataset.tab)));
 function showLogin() {

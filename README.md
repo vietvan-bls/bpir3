@@ -285,7 +285,8 @@ Cài: [server/tailscale-funnel.sh](server/tailscale-funnel.sh) (lần đầu in 
 
 ### Thiết bị ở xa (ESP32) qua MQTT/TLS
 
-- Mỗi thiết bị một tài khoản: `sh /root/server/mqtt-add-device.sh <tên>` (in ra mật khẩu), chỉ dùng được
+- Mỗi thiết bị một tài khoản, tạo ngay trên trang **`/iot` → ⚙️ Cài đặt → Tài khoản thiết bị** (hiện mật khẩu một lần
+  kèm sẵn `secrets.h`; đổi mật khẩu / xóa cũng ở đó), hoặc bằng lệnh `sh /root/server/mqtt-add-device.sh <tên>`. Chỉ dùng được
   `iot/<tên>/#` (quy tắc `pattern` trong [server/mosquitto/acl](server/mosquitto/acl)). Xóa: `... <tên> --delete`.
   Lưu ý: `mqtt-setup.sh --reset` tạo lại file mật khẩu nên xóa luôn các tài khoản này.
 - Code mẫu: [firmware/esp32-mqtt/esp32-mqtt.ino](firmware/esp32-mqtt/esp32-mqtt.ino) (PubSubClient + WiFiClientSecure,

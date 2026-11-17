@@ -53,6 +53,8 @@ IoT (iot.py, trang /iot): mật khẩu riêng, khác mật khẩu quản trị. 
   POST /api/iot/control {"id", "value"?}    bấm nút điều khiển
   POST /api/iot/publish {"topic", "payload", "retain"?}   gửi tin MQTT (topic iot/...)
   POST /api/iot/delete-device {"id"}        xóa dữ liệu của một thiết bị
+  GET  /api/iot/accounts         tài khoản MQTT của thiết bị (mỗi tài khoản <tên> chỉ dùng iot/<tên>/#)
+  POST /api/iot/accounts {"action": "create"|"reset"|"delete", "name", "note"?}  tạo / đổi mật khẩu / xóa
 
 Mọi POST bắt buộc có header "X-BPI: 1". Trình duyệt không cho trang web lạ tự gắn header này
 khi gửi sang board (CORS), và cookie phiên là SameSite=Strict, nên trang độc hại không bấm hộ được.
@@ -636,6 +638,7 @@ except Exception as e:  # noqa: BLE001
 # ---------------------------------------------------------------- IoT / MQTT (iot.py)
 import iot as _iot
 IOT_AUTH = _iot.Auth()
+IOT_ACCOUNTS = _iot.DeviceAccounts()
 try:
     IOT = _iot.IoT()
 except Exception as e:  # noqa: BLE001
@@ -1008,6 +1011,9 @@ class Handler(BaseHTTPRequestHandler):
             return self._send(200, IOT.history(q.get("topic", [""])[0], q.get("range", ["24h"])[0]))
         if path == "/api/iot/controls":
             return self._send(200, IOT.controls())
+        if path == "/api/iot/accounts":
+            return self._send(200, {"accounts": IOT_ACCOUNTS.list(), "lan_host": lan_config()["ip"],
+                                    "public_host": _iot.public_mqtt_host()})
         return self._send(404, {"error": "not found"})
 
     def iot_post(self, path, body):
@@ -1038,6 +1044,15 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/api/iot/delete-device":
             IOT.delete_device(str(body.get("id", "")))
             return self._send(200, {"ok": True})
+        if path == "/api/iot/accounts":
+            act = body.get("action")
+            if act in ("create", "reset"):
+                r = IOT_ACCOUNTS.create(body.get("name"), body.get("note", ""), reset=act == "reset")
+                return self._send(200, {**r, "lan_host": lan_config()["ip"], "public_host": _iot.public_mqtt_host()})
+            if act == "delete":
+                IOT_ACCOUNTS.delete(body.get("name"))
+                return self._send(200, {"ok": True})
+            raise ValueError("action phải là create / reset / delete")
         return self._send(404, {"error": "not found"})
 
     def do_GET(self):

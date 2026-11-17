@@ -296,6 +296,120 @@ class IoT:
         return {"ok": True, "topic": c["topic"], "payload": payload}
 
 
+class DeviceAccounts:
+    """Tài khoản MQTT riêng cho từng thiết bị (vd ESP32 ở xa), quản lý từ trang /iot.
+
+    Mỗi tài khoản <tên> chỉ dùng được iot/<tên>/# nhờ dòng "pattern readwrite iot/%u/#" trong acl của Mosquitto.
+    Sửa file mật khẩu bằng mosquitto_passwd rồi gửi SIGHUP để broker nạp lại (thiết bị đang kết nối không bị ngắt).
+    """
+    PASSWD = os.environ.get("IOT_MOSQ_PASSWD", "/etc/mosquitto/passwd")
+    META = os.path.join(DATA_DIR, "accounts.json")
+    RESERVED = {"iot", "server", "admin", "root"}
+    NAME_RE = r"[a-z0-9][a-z0-9-]{1,30}"
+
+    def __init__(self):
+        self.lock = threading.Lock()
+
+    def _meta(self):
+        try:
+            with open(self.META) as f:
+                return json.load(f)
+        except (OSError, ValueError):
+            return {}
+
+    def _save_meta(self, m):
+        tmp = self.META + ".tmp"
+        with open(tmp, "w") as f:
+            json.dump(m, f, ensure_ascii=False)
+        os.replace(tmp, self.META)
+
+    def _users(self):
+        try:
+            with open(self.PASSWD) as f:
+                return [ln.split(":", 1)[0] for ln in f if ":" in ln]
+        except OSError:
+            return []
+
+    def _check_name(self, name):
+        import re
+        if not re.fullmatch(self.NAME_RE, name or ""):
+            raise ValueError("Tên chỉ gồm chữ thường, số, dấu - (2–31 ký tự), vd esp-vuon")
+        if name in self.RESERVED:
+            raise ValueError(f"Không dùng được tên “{name}” (tài khoản hệ thống)")
+
+    def _fix_perms(self):
+        # Broker chạy dưới user "mosquitto" và đọc lại file khi nhận SIGHUP.
+        import shutil
+        os.chmod(self.PASSWD, 0o600)
+        try:
+            shutil.chown(self.PASSWD, "mosquitto", "mosquitto")
+        except (LookupError, OSError):
+            pass
+
+    @staticmethod
+    def _reload():
+        import subprocess
+        subprocess.run(["killall", "-HUP", "mosquitto"], capture_output=True, timeout=10)
+
+    def _set_pw(self, name, pw):
+        import subprocess
+        r = subprocess.run(["mosquitto_passwd", "-b", self.PASSWD, name, pw], capture_output=True, text=True, timeout=20)
+        if r.returncode != 0:
+            raise OSError(r.stderr.strip() or "mosquitto_passwd lỗi")
+        self._fix_perms()
+
+    def list(self):
+        meta = self._meta()
+        return [{"name": u, "created": meta.get(u, {}).get("created"), "note": meta.get(u, {}).get("note", "")}
+                for u in sorted(self._users()) if u not in self.RESERVED]
+
+    def create(self, name, note="", reset=False):
+        name = str(name or "").strip().lower()
+        self._check_name(name)
+        pw = secrets.token_urlsafe(15)
+        with self.lock:
+            exists = name in self._users()
+            if reset and not exists:
+                raise ValueError(f"Không có tài khoản {name}")
+            if not reset and exists:
+                raise ValueError(f"Tài khoản {name} đã có (dùng Đổi mật khẩu)")
+            self._set_pw(name, pw)
+            meta = self._meta()
+            m = meta.setdefault(name, {"created": time.time()})
+            if note:
+                m["note"] = str(note)[:80]
+            m["changed"] = time.time()
+            self._save_meta(meta)
+            self._reload()
+        return {"name": name, "password": pw, "topic": f"{TOPIC_ROOT}/{name}"}
+
+    def delete(self, name):
+        import subprocess
+        name = str(name or "").strip().lower()
+        self._check_name(name)
+        with self.lock:
+            if name not in self._users():
+                raise ValueError(f"Không có tài khoản {name}")
+            r = subprocess.run(["mosquitto_passwd", "-D", self.PASSWD, name], capture_output=True, text=True, timeout=20)
+            if r.returncode != 0:
+                raise OSError(r.stderr.strip() or "mosquitto_passwd lỗi")
+            self._fix_perms()
+            meta = self._meta()
+            meta.pop(name, None)
+            self._save_meta(meta)
+            self._reload()
+
+
+def public_mqtt_host():
+    """Tên Tailscale Funnel của board (nếu có) để thiết bị ở xa kết nối."""
+    import subprocess
+    try:
+        out = subprocess.run(["tailscale", "status", "--json"], capture_output=True, text=True, timeout=5).stdout
+        return json.loads(out)["Self"]["DNSName"].rstrip(".") or None
+    except Exception:  # noqa: BLE001
+        return None
+
+
 class Auth:
     """Mật khẩu + phiên đăng nhập riêng cho trang IoT (giống cách làm của mật khẩu quản trị)."""
     SESSION_DAYS, ITER, MAX_FAILS, LOCK_SECONDS = 30, 200_000, 5, 300
