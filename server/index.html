@@ -234,9 +234,9 @@
         <button onclick="camCopy()">🔗 Sao chép link stream</button>
         <span class="note" id="camInfo" style="margin:0"></span>
       </div>
-      <p class="note">Camera giả lập: phát lặp video mẫu <code>vtest.avi</code> (người đi bộ, 768×576, 10 khung/giây)
-        dưới dạng stream MJPEG. Link stream mở được bằng trình duyệt, VLC, Home Assistant, Frigate…
-        như camera IP thật.<br>
+      <p class="note">Webcam USB cắm vào board (UVC, MJPEG 1280×720, 10 khung/giây), stream MJPEG chép thẳng từ camera.
+        Không có camera thì phát lặp video mẫu <code>vtest.avi</code>. Link stream mở được bằng trình duyệt, VLC,
+        Home Assistant, Frigate… như camera IP.<br>
         Nhận dạng người: board trừ nền + gom vùng chuyển động + tracking (numpy, ~11 ms/khung), rồi gửi tọa độ qua
         <code>/api/vision/stream</code> để trang vẽ khung. Người đi sát nhau có thể bị gộp làm một.</p>
     </div>

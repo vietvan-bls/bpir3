@@ -1,8 +1,10 @@
-"""Phát hiện và tracking người cho camera giả lập, chỉ dùng numpy (OpenWrt không có OpenCV).
+"""Phát hiện và tracking người (camera thật hoặc video mẫu), chỉ dùng numpy (OpenWrt không có OpenCV).
 
 Cách làm:
-  1. Phân tích trên ảnh xám thu nhỏ 192x144 (tạo sẵn bằng ffmpeg, khớp từng khung với file MJPEG).
-  2. Trừ nền: nền = trung vị của ~60 khung rải đều, sau đó cập nhật chậm ở những chỗ không có người.
+  1. Phân tích trên ảnh xám thu nhỏ 192x144: camera thật thì ffmpeg xuất song song với luồng MJPEG (LiveVision);
+     video mẫu thì tạo sẵn bằng ffmpeg, khớp từng khung với file MJPEG (Vision).
+  2. Trừ nền: nền = trung vị của ~60 khung rải đều (video mẫu) hoặc khung đầu tiên (camera thật), sau đó cập nhật
+     chậm ở những chỗ không có người. Bật/tắt đèn làm cả cảnh đổi -> dựng lại nền ngay.
      Pixel lệch nền > DIFF_THRESH là "tiền cảnh".
   3. Lọc nhiễu bằng phép mở/đóng hình thái học, gom pixel liền nhau thành vùng (connected components)
      trên lưới 96x72, bỏ vùng quá nhỏ -> mỗi vùng là một "người".
@@ -26,6 +28,7 @@ MAX_DIST = 70         # khoảng cách tâm tối đa (px ảnh gốc) để gh�
 MAX_MISSED = 6        # mất dấu quá số khung này thì xóa
 CONFIRM_HITS = 3      # xuất hiện đủ số khung này mới tính là người
 TRAIL_LEN = 25        # số điểm vệt đường đi
+SCENE_CHANGE = 0.45   # > tỉ lệ này pixel lệch nền -> coi là đổi ánh sáng / camera bị xoay: dựng lại nền
 
 
 def _dilate(m):
@@ -61,15 +64,24 @@ def _components(mask):
 
 
 class MotionDetector:
-    def __init__(self, gray_frames, full_w, full_h):
-        n, self.h, self.w = gray_frames.shape
-        sample = gray_frames[:: max(1, n // 60)]
-        self.bg = np.median(sample, axis=0).astype(np.float32)
+    def __init__(self, bg, full_w, full_h):
+        self.bg = bg.astype(np.float32)
+        self.h, self.w = self.bg.shape
         self.cell = (full_w / (self.w / 2), full_h / (self.h / 2))  # kích thước 1 ô lưới (px ảnh gốc)
+        self.scene_changed = False
+
+    @classmethod
+    def from_frames(cls, gray_frames, full_w, full_h):
+        n = len(gray_frames)
+        return cls(np.median(gray_frames[:: max(1, n // 60)], axis=0), full_w, full_h)
 
     def detect(self, g):
         gf = g.astype(np.float32)
         fg = np.abs(gf - self.bg) > DIFF_THRESH
+        self.scene_changed = fg.mean() > SCENE_CHANGE
+        if self.scene_changed:          # bật/tắt đèn, camera tự chỉnh sáng, bị xoay: lấy khung này làm nền mới
+            self.bg = gf
+            return []
         # cập nhật nền chậm ở chỗ không có người (để thích nghi thay đổi ánh sáng)
         self.bg = np.where(fg, self.bg, self.bg * (1 - BG_RATE) + gf * BG_RATE)
         m = _dilate(_erode(fg))                 # mở: bỏ chấm nhiễu
@@ -134,7 +146,7 @@ class Vision:
     def __init__(self, gray_path, full_w, full_h, small_w=192, small_h=144):
         self.gray = np.fromfile(gray_path, np.uint8).reshape(-1, small_h, small_w)
         self.full = (full_w, full_h)
-        self.det = MotionDetector(self.gray, full_w, full_h)
+        self.det = MotionDetector.from_frames(self.gray, full_w, full_h)
         self.trk = Tracker()
         self.last_index = -1
         self.result = {"frame": -1, "people": [], "count": 0, "total": 0, "ms": 0}
@@ -149,5 +161,37 @@ class Vision:
         ms = (time.perf_counter() - t0) * 1000
         self.ms_avg = ms if not self.ms_avg else self.ms_avg * 0.9 + ms * 0.1
         self.result = {"frame": index, "w": self.full[0], "h": self.full[1], "people": people,
+                       "count": len(people), "total": self.trk.total, "ms": round(self.ms_avg, 1)}
+        return self.result
+
+
+class LiveVision:
+    """Như Vision nhưng nhận từng ảnh xám từ camera thật (không biết trước toàn bộ video)."""
+
+    def __init__(self, full_w, full_h):
+        self.full = (full_w, full_h)
+        self.det = None
+        self.trk = Tracker()
+        self.n = 0
+        self.ms_avg = 0.0
+        self.motion_at = 0.0          # lần cuối thấy chuyển động (dùng cho cảnh báo sau này)
+        self.result = {"frame": -1, "w": full_w, "h": full_h, "people": [], "count": 0, "total": 0, "ms": 0}
+
+    def process_gray(self, g):
+        t0 = time.perf_counter()
+        self.n += 1
+        if self.det is None:
+            self.det = MotionDetector(g, *self.full)
+            boxes = []
+        else:
+            boxes = self.det.detect(g)
+            if self.det.scene_changed:
+                self.trk.reset()
+        people = self.trk.update(boxes)
+        if people:
+            self.motion_at = time.time()
+        ms = (time.perf_counter() - t0) * 1000
+        self.ms_avg = ms if not self.ms_avg else self.ms_avg * 0.9 + ms * 0.1
+        self.result = {"frame": self.n, "w": self.full[0], "h": self.full[1], "people": people,
                        "count": len(people), "total": self.trk.total, "ms": round(self.ms_avg, 1)}
         return self.result

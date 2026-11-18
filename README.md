@@ -96,7 +96,21 @@ Truy cập:
 
 Quản lý dịch vụ trên board: `service myserver start|stop|restart`, xem log: `logread -e python3`.
 
-### Camera giả lập (`/camera.mjpg`)
+### Camera USB thật (`/camera.mjpg`)
+
+Webcam UVC cắm vào board (đang dùng: `0c45:636b USB Camera`, Sonix, qua hub USB). Cần driver: `apk add kmod-video-uvc`
+(tạo `/dev/video0`). Camera xuất MJPEG sẵn tới 1920×1080, nên server **chép thẳng** khung JPEG cho người xem (không nén lại).
+
+- Một tiến trình `ffmpeg` đọc camera và xuất song song 2 luồng: MJPEG gốc (stdout) cho người xem, ảnh xám 192×144
+  (pipe riêng) cho nhận dạng chuyển động. Đo trên board: ffmpeg ~4% CPU, server ~2%, nhận dạng ~7 ms/khung.
+- Cấu hình bằng biến môi trường trong `myserver.init`: `CAMERA_DEVICE` (mặc định `/dev/video0`), `CAMERA_SIZE`
+  (`1280x720`), `CAMERA_FPS` (`10`), `CAMERA_MODE=file` để ép dùng video mẫu.
+- Không có `/dev/video0` lúc server khởi động → dùng video mẫu như cũ. Rút camera giữa chừng → tự thử lại mỗi 3 giây.
+- Nền ảnh để trừ nền lấy từ khung đầu và cập nhật dần; bật/tắt đèn (cả cảnh đổi) thì dựng lại nền ngay.
+- ~2 Mbps mỗi người xem ở 1280×720. Camera không có hồng ngoại: phòng tối thì hình gần như đen.
+- `/api/status` → `camera`: `live`, `size`, `error`.
+
+### Camera giả lập (video mẫu, khi không có camera USB)
 
 Phát lặp video mẫu `vtest.avi` của OpenCV (người đi bộ, 768×576, 10 fps) như một camera IP, dạng MJPEG.
 Xem được cả qua link công khai (tab **📷 Camera**, hoặc mở thẳng `<link>/camera.mjpg` bằng trình duyệt/VLC).

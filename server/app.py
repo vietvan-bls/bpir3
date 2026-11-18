@@ -191,7 +191,9 @@ def status():
         "wifi_clients": len(stations()),
         "led": led_mode(),
         "camera": {"on": CAMERA is not None, "viewers": CAMERA.viewers if CAMERA else 0,
-                   "fps": CAMERA_FPS},
+                   "fps": CAMERA_FPS, "live": isinstance(CAMERA, LiveCamera),
+                   "size": CAMERA_SIZE if isinstance(CAMERA, LiveCamera) else "768x576",
+                   "error": getattr(CAMERA, "error", "")},
         "epoch": int(time.time()),
     }
 
@@ -544,9 +546,12 @@ def lan_status():
     return {**lan_config(), "job": job}
 
 
-# ---------------------------------------------------------------- Camera giả lập (MJPEG)
+# ---------------------------------------------------------------- Camera (USB thật, hoặc video mẫu nếu không có)
 CAMERA_FILE = os.environ.get("CAMERA_FILE", "/mnt/data/camera/vtest.mjpeg")
-CAMERA_FPS = 10
+CAMERA_FPS = int(os.environ.get("CAMERA_FPS", "10"))
+CAMERA_DEVICE = os.environ.get("CAMERA_DEVICE", "/dev/video0")       # webcam UVC (kmod-video-uvc)
+CAMERA_SIZE = os.environ.get("CAMERA_SIZE", "1280x720")              # camera xuất MJPEG sẵn ở độ phân giải này
+GRAY_W, GRAY_H = 192, 144                                            # ảnh xám nhỏ để nhận dạng chuyển động
 
 
 class Camera:
@@ -593,18 +598,125 @@ class Camera:
             return self.frame, self.seq
 
 
+class LiveCamera:
+    """Webcam USB qua ffmpeg. Một tiến trình ffmpeg xuất 2 luồng cùng lúc:
+      - stdout: MJPEG gốc của camera (chép thẳng, không nén lại -> rất nhẹ CPU) cho người xem;
+      - fd 3:   ảnh xám 192x144 (rawvideo) cho nhận dạng chuyển động.
+    Rút camera / ffmpeg chết -> tự thử lại. Cùng giao diện với Camera (frame, seq, detections, next_*)."""
+
+    def __init__(self, device, size, fps, vision=None):
+        self.device, self.size, self.fps, self.vision = device, size, fps, vision
+        self.frame, self.seq, self.viewers, self.detections = b"", 0, 0, None
+        self.error = ""
+        self.cond = threading.Condition()
+        threading.Thread(target=self._run, daemon=True).start()
+
+    def _gray_reader(self, fd):
+        n = GRAY_W * GRAY_H
+        with os.fdopen(fd, "rb", buffering=0) as f:
+            buf = b""
+            while True:
+                chunk = f.read(n - len(buf))
+                if not chunk:
+                    return
+                buf += chunk
+                if len(buf) < n:
+                    continue
+                g, buf = buf, b""
+                if not self.vision:
+                    continue
+                try:
+                    det = self.vision.process_gray(_vision.np.frombuffer(g, _vision.np.uint8).reshape(GRAY_H, GRAY_W))
+                except Exception as e:  # noqa: BLE001 - lỗi nhận dạng không được làm dừng camera
+                    print(f"Lỗi nhận dạng: {e}", flush=True)
+                    continue
+                with self.cond:
+                    self.detections = det
+
+    def _run(self):
+        while True:
+            if not os.path.exists(self.device):
+                self.error = f"Không thấy {self.device} (camera chưa cắm?)"
+                time.sleep(3)
+                continue
+            r, w = os.pipe()
+            cmd = ["ffmpeg", "-hide_banner", "-loglevel", "error",
+                   "-f", "v4l2", "-input_format", "mjpeg", "-framerate", str(self.fps), "-video_size", self.size,
+                   "-i", self.device,
+                   "-map", "0:v", "-c:v", "copy", "-f", "mjpeg", "pipe:1",
+                   "-map", "0:v", "-vf", f"scale={GRAY_W}:{GRAY_H},format=gray", "-f", "rawvideo", f"pipe:{w}"]
+            try:
+                p = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, pass_fds=(w,))
+            except OSError as e:
+                os.close(r); os.close(w)
+                self.error = f"Không chạy được ffmpeg: {e}"
+                time.sleep(5)
+                continue
+            os.close(w)
+            threading.Thread(target=self._gray_reader, args=(r,), daemon=True).start()
+            self.error = ""
+            buf = b""
+            try:
+                while True:
+                    chunk = p.stdout.read1(65536)
+                    if not chunk:
+                        break
+                    buf += chunk
+                    while True:   # tách từng ảnh JPEG: FFD8 ... FFD9
+                        a = buf.find(b"\xff\xd8")
+                        if a < 0:
+                            buf = b""
+                            break
+                        b = buf.find(b"\xff\xd9", a + 2)
+                        if b < 0:
+                            buf = buf[a:]
+                            if len(buf) > 4 << 20:   # dữ liệu hỏng
+                                buf = b""
+                            break
+                        frame, buf = buf[a:b + 2], buf[b + 2:]
+                        with self.cond:
+                            self.frame, self.seq = frame, self.seq + 1
+                            self.cond.notify_all()
+            finally:
+                p.kill()
+                err = p.stderr.read().decode(errors="replace").strip()
+                p.wait()
+                self.error = err.splitlines()[-1] if err else "ffmpeg dừng"
+                print(f"Camera: {self.error}, thử lại sau 3 giây", flush=True)
+                time.sleep(3)
+
+    def next_detection(self, last_seq, timeout=5):
+        with self.cond:
+            self.cond.wait_for(lambda: self.seq != last_seq, timeout)
+            return self.detections, self.seq
+
+    def next_frame(self, last_seq, timeout=5):
+        with self.cond:
+            self.cond.wait_for(lambda: self.seq != last_seq and self.frame, timeout)
+            return self.frame, self.seq
+
+
 TUNNEL_MIN_EVENT = 4096  # byte tối thiểu mỗi sự kiện SSE khi đi qua Cloudflare tunnel (xem stream_vision)
 CAMERA_GRAY = os.environ.get("CAMERA_GRAY", "/mnt/data/camera/vtest_192x144.gray")  # ảnh xám nhỏ để phân tích
 
+USE_LIVE = os.path.exists(CAMERA_DEVICE) and os.environ.get("CAMERA_MODE", "auto") != "file"
 try:
     import vision as _vision
-    VISION = _vision.Vision(CAMERA_GRAY, 768, 576)
+    if USE_LIVE:
+        _w, _h = (int(v) for v in CAMERA_SIZE.split("x"))
+        VISION = _vision.LiveVision(_w, _h)
+    else:
+        VISION = _vision.Vision(CAMERA_GRAY, 768, 576)
 except Exception as e:  # noqa: BLE001 - thiếu numpy / thiếu file thì camera vẫn chạy, chỉ tắt nhận dạng
     print(f"Nhận dạng người tắt: {e}", flush=True)
     VISION = None
 
 try:
-    CAMERA = Camera(CAMERA_FILE, CAMERA_FPS, VISION)
+    if USE_LIVE:
+        CAMERA = LiveCamera(CAMERA_DEVICE, CAMERA_SIZE, CAMERA_FPS, VISION)
+        print(f"Camera thật: {CAMERA_DEVICE} {CAMERA_SIZE} {CAMERA_FPS} fps", flush=True)
+    else:
+        CAMERA = Camera(CAMERA_FILE, CAMERA_FPS, VISION)
 except (OSError, ValueError) as e:
     print(f"Camera tắt: {e}", flush=True)
     CAMERA = None
