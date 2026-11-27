@@ -11,12 +11,14 @@ dấu -) -> giá trị + package. Dòng nào khớp sai thì chọn lại tay tr
 """
 import csv
 import io
+import json
 import os
 import re
 import secrets
 import sqlite3
 import threading
 import time
+import urllib.request
 import xml.etree.ElementTree as ET
 import zipfile
 
@@ -254,7 +256,57 @@ CREATE TABLE IF NOT EXISTS bom_lines (
   digikey TEXT DEFAULT '', mouser TEXT DEFAULT '', dnp INTEGER DEFAULT 0,
   part_id INTEGER REFERENCES parts(id) ON DELETE SET NULL, match TEXT DEFAULT '');
 CREATE INDEX IF NOT EXISTS bl_bom ON bom_lines (bom_id);
+CREATE TABLE IF NOT EXISTS scanned_labels (label_id TEXT PRIMARY KEY, part_id INTEGER, ts REAL, qty INTEGER, raw TEXT);
+CREATE TABLE IF NOT EXISTS lcsc_cache (code TEXT PRIMARY KEY, ts REAL, data TEXT);
 """
+
+
+# ------------------------------------------------------------------ đọc mã vạch / QR trên nhãn
+GS_CHARS = "\x1d\x1e\x04"   # phân cách trường của chuẩn ANSI MH10.8.2 (Digi-Key, Mouser DataMatrix)
+
+
+def parse_label(code):
+    """Nhận nội dung mã quét được -> dict {supplier, lcsc, digikey, mpn, qty, order, label_id, query}.
+
+    - LCSC: QR dạng {pbn:PICK…,on:WM…,pc:C52711259,pm:CGA0603X7R104M500JT,qty:1500,…} (không phải JSON chuẩn)
+    - Digi-Key / chuẩn ANSI MH10.8.2 (DataMatrix): [)>␞06␝P<mã DK>␝1P<MPN>␝…␝Q<số lượng>…
+    - Mã LCSC trơn (C2040) hoặc link trang sản phẩm LCSC (…_C2040.html)
+    - Còn lại: dùng làm từ khóa tìm kiếm.
+    """
+    code = str(code or "").strip()
+    out = {"supplier": "", "lcsc": "", "digikey": "", "mouser": "", "mpn": "", "qty": 0, "order": "", "label_id": "",
+           "query": ""}
+    if not code:
+        raise ValueError("Mã trống")
+    if code.startswith("{") and re.search(r"[{,]\s*pc\s*:", code):
+        d = {}
+        for part in re.split(r",(?=\s*\w+\s*:)", code.strip().strip("{}")):
+            k, _, v = part.partition(":")
+            d[k.strip().lower()] = v.strip().strip('"')
+        out.update(supplier="lcsc", lcsc=d.get("pc", "").upper(), mpn=d.get("pm", ""), qty=_int(d.get("qty"), 0),
+                   order=d.get("on", ""))
+        if d.get("pbn") or d.get("on"):
+            out["label_id"] = f"lcsc:{d.get('on', '')}:{d.get('pbn', '')}:{d.get('pc', '')}"
+        return out
+    if code.startswith("[)>") or (sum(code.count(c) for c in GS_CHARS) >= 2):
+        fields = [f for f in re.split("[" + GS_CHARS + "]", code) if f]
+        info = {}
+        for f in fields:
+            for key in ("1P", "30P", "P", "Q", "1K", "10K", "11K", "1T", "4L", "11Z", "12Z", "13Z"):
+                if f.startswith(key) and key not in info:
+                    info[key] = f[len(key):]
+                    break
+        out.update(supplier="digikey", mpn=info.get("1P", ""), digikey=info.get("P", "") or info.get("30P", ""),
+                   qty=_int(info.get("Q"), 0), order=info.get("1K", "") or info.get("10K", ""))
+        if out["order"] or info.get("1T") or info.get("11K"):
+            out["label_id"] = f"dk:{out['order']}:{info.get('11K', '')}:{info.get('1T', '')}:{out['digikey'] or out['mpn']}"
+        return out
+    m = re.search(r"\b(C\d{3,10})(?:\.html|\b)", code, re.I) if "lcsc" in code.lower() else None
+    if LCSC_RE.match(code) or m:
+        out.update(supplier="lcsc", lcsc=(m.group(1) if m else code).upper())
+        return out
+    out["query"] = code[:200]
+    return out
 
 
 class Kho:
@@ -701,3 +753,125 @@ class Kho:
                         c.get("lcsc", ""), c.get("digikey", ""), c.get("mouser", ""), c.get("taobao", ""),
                         p["datasheet"], p["notes"]])
         return "﻿" + out.getvalue()     # BOM UTF-8 để Excel mở đúng tiếng Việt
+
+
+# ------------------------------------------------------------------ thông tin sản phẩm LCSC + quét nhãn
+LCSC_API = "https://wmsc.lcsc.com/ftps/wm/product/detail?productCode={}"
+LCSC_CACHE_DAYS = 30
+
+
+def _lcsc_to_part(r):
+    """Kết quả API LCSC -> các trường linh kiện."""
+    main = next((p for p in (r.get("paramVOList") or []) if p.get("isMain")), None)
+    prices = r.get("productPriceList") or []
+    return {k: v for k, v in {
+        "mpn": r.get("productModel") or "",
+        "manufacturer": r.get("brandNameEn") or "",
+        "package": r.get("encapStandard") or "",
+        "category": r.get("catalogName") or r.get("parentCatalogName") or "",
+        "name": (r.get("productIntroEn") or "").replace(" RoHS", "").strip(),
+        "value": (main or {}).get("paramValueEn") or "",
+        "datasheet": (r.get("pdfUrl") or "").split("?")[0],
+        "image": (r.get("productImages") or [""])[0],
+        "price": prices[0].get("usdPrice") if prices else None,
+    }.items() if v not in ("", None)}
+
+
+def lcsc_info(self, code, refresh=False):
+    """Tra thông tin sản phẩm LCSC (API của trang lcsc.com, có thể đổi bất cứ lúc nào), lưu đệm 30 ngày."""
+    code = str(code or "").strip().upper()
+    if not LCSC_RE.match(code):
+        raise ValueError("Mã LCSC phải dạng C12345")
+    if not refresh:
+        row = self._q("SELECT ts, data FROM lcsc_cache WHERE code = ?", (code,))
+        if row and time.time() - row[0]["ts"] < LCSC_CACHE_DAYS * 86400:
+            return json.loads(row[0]["data"])
+    req = urllib.request.Request(LCSC_API.format(code), headers={"User-Agent": "Mozilla/5.0", "Accept": "application/json"})
+    with urllib.request.urlopen(req, timeout=12) as resp:
+        j = json.loads(resp.read().decode("utf-8", "replace"))
+    r = j.get("result") if isinstance(j, dict) else None
+    if not r:
+        raise ValueError(f"LCSC không có mã {code}")
+    info = _lcsc_to_part(r)
+    with self.lock:
+        self.db.execute("INSERT OR REPLACE INTO lcsc_cache VALUES (?, ?, ?)", (code, time.time(), json.dumps(info)))
+        self.db.commit()
+    return info
+
+
+def scan(self, code):
+    """Đọc mã quét -> linh kiện khớp trong kho (nếu có), nhãn đã nhập chưa, gợi ý thông tin từ LCSC."""
+    lab = parse_label(code)
+    res = {"label": lab, "part": None, "already": None, "lcsc_info": None, "lcsc_error": "", "results": []}
+    if lab["query"]:
+        res["results"] = self.list_parts(lab["query"], limit=20)["items"]
+        if len(res["results"]) == 1:
+            res["part"] = res["results"][0]
+        return res
+    pid, how = self.find(lab["lcsc"], lab["digikey"], lab["mouser"], lab["mpn"])
+    if pid:
+        res["part"], res["match"] = self.get_part(pid), how
+    if lab["label_id"]:
+        row = self._q("SELECT * FROM scanned_labels WHERE label_id = ?", (lab["label_id"],))
+        res["already"] = row[0] if row else None
+    if lab["lcsc"] and not pid:
+        try:
+            res["lcsc_info"] = self.lcsc_info(lab["lcsc"])
+        except Exception as e:  # noqa: BLE001 - không tra được LCSC thì vẫn tạo tay được
+            res["lcsc_error"] = str(e)[:200]
+    return res
+
+
+def scan_apply(self, code, action, qty=None, part_id=None, fields=None):
+    """action: add = cộng số lượng nhãn vào linh kiện (part_id hoặc tự khớp); create = tạo linh kiện mới rồi nhập."""
+    lab = parse_label(code)
+    n = _int(qty, lab["qty"]) if qty not in (None, "") else lab["qty"]
+    ref = lab["order"] or ""
+    sups = [{"supplier": s, "sku": lab[s]} for s in ("lcsc", "digikey", "mouser") if lab[s]]
+    with self.lock:
+        if action == "create":
+            d = {"mpn": lab["mpn"], "qty": 0, "suppliers": sups}
+            if lab["lcsc"]:
+                try:
+                    d.update(self.lcsc_info(lab["lcsc"]))
+                except Exception:  # noqa: BLE001
+                    pass
+            d.update({k: v for k, v in (fields or {}).items() if k in PART_FIELDS and v not in (None, "")})
+            d["qty"] = 0
+            part_id = self.save_part(d)["id"]
+        else:
+            if not part_id:
+                part_id, _ = self.find(lab["lcsc"], lab["digikey"], lab["mouser"], lab["mpn"])
+            if not part_id:
+                raise ValueError("Không tìm thấy linh kiện trong kho: chọn “Tạo mới”")
+            p = self.get_part(part_id)
+            have = {(s["supplier"], s["sku"].upper()) for s in p["suppliers"]}
+            new = [s for s in sups if (s["supplier"], s["sku"].upper()) not in have]
+            extra = {k: v for k, v in (fields or {}).items() if k in ("location", "min_qty", "category") and v not in (None, "")}
+            if new or extra:
+                self.save_part({"id": part_id, **extra, **({"suppliers": p["suppliers"] + new} if new else {})})
+        if n:
+            src = {"lcsc": "LCSC", "digikey": "Digi-Key"}.get(lab["supplier"], "nhãn")
+            self.adjust(part_id, delta=n, reason=f"Quét nhãn {src}", ref=ref)
+        if lab["label_id"]:
+            self.db.execute("INSERT OR REPLACE INTO scanned_labels VALUES (?, ?, ?, ?, ?)",
+                            (lab["label_id"], part_id, time.time(), n, str(code)[:500]))
+            self.db.commit()
+    return self.get_part(part_id)
+
+
+def fill_from_lcsc(self, pid, overwrite=False):
+    """Điền các trường còn trống của linh kiện từ thông tin LCSC (theo mã LCSC đã lưu)."""
+    p = self.get_part(pid)
+    code = next((s["sku"] for s in p["suppliers"] if s["supplier"] == "lcsc" and s["sku"]), "")
+    if not code:
+        raise ValueError("Linh kiện chưa có mã LCSC")
+    info = self.lcsc_info(code, refresh=True)
+    upd = {k: v for k, v in info.items() if overwrite or not p.get(k)}
+    return self.save_part({"id": pid, **upd}) if upd else p
+
+
+Kho.lcsc_info = lcsc_info
+Kho.scan = scan
+Kho.scan_apply = scan_apply
+Kho.fill_from_lcsc = fill_from_lcsc

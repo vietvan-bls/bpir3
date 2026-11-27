@@ -255,6 +255,13 @@ Mở: `http://192.168.2.1:8080/kho` / `https://bpi-r3.tail24dd60.ts.net/kho`, ho
 - **📥 Nhập hàng**: thả file đơn hàng LCSC / Digi-Key / Mouser (CSV/XLSX) hoặc bảng tự làm (Taobao):
   linh kiện đã có thì cộng số lượng + thêm mã nhà cung cấp (gộp đúng cùng 1 linh kiện mua ở nhiều nơi), chưa có thì tạo.
   Chế độ “đặt đúng số lượng” dùng cho file kiểm kê. File `.xls` (Excel cũ) phải lưu lại thành `.xlsx` / `.csv`.
+- **📷 Quét nhãn**: app (nút **Quét**, dùng camera) hoặc ô “Quét / dán mã” trên web (đầu đọc mã vạch USB 2D gõ như bàn phím).
+  Đọc QR trên túi LCSC `{pbn:…,on:WM…,pc:C52711259,pm:CGA0603X7R104M500JT,qty:1500,…}`, DataMatrix Digi-Key
+  (chuẩn ANSI MH10.8.2), mã `C…` hoặc link sản phẩm LCSC; chữ khác thì tìm trong kho. Đã có → cộng số lượng của nhãn;
+  chưa có → tạo mới, **tự điền từ LCSC** (mô tả, giá trị, package, hãng, loại, datasheet, ảnh, giá). Mỗi nhãn chỉ cộng
+  một lần (nhớ theo mã đơn + mã pick), quét lại sẽ cảnh báo. Quét liên tục được, vị trí nhớ từ lần trước.
+  Thông tin LCSC lấy từ API của trang lcsc.com (không chính thức, có thể đổi), lưu đệm 30 ngày; nút “Điền từ LCSC”
+  ở chi tiết linh kiện để cập nhật.
 - **⚠️ Sắp hết**: linh kiện có “Cảnh báo khi ≤” > 0 và số lượng ≤ mức đó; hiện số đếm ở đầu trang và trong app.
 - Dữ liệu: SQLite `/mnt/data/kho/kho.db`, tự sao lưu mỗi ngày vào `/mnt/data/kho/backup/` (giữ 14 bản).
   Xuất toàn bộ kho ra CSV (mở bằng Excel): `/api/kho/export.csv`.

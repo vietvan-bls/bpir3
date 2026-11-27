@@ -71,6 +71,11 @@ Kho linh kiện (kho.py, trang /kho), cần quyền quản trị:
   POST /api/kho/bom/rematch {id}   POST /api/kho/bom/add-missing {id}   POST /api/kho/bom/consume {id, boards}
   POST /api/kho/bom/delete {id}
   GET  /api/kho/bom/shortage.csv?id=&boards=&supplier=lcsc|all    GET /api/kho/export.csv
+  POST /api/kho/scan {code}      đọc mã quét (QR nhãn LCSC, DataMatrix Digi-Key, mã C…, chữ) -> linh kiện khớp,
+                                 nhãn đã nhập chưa, thông tin LCSC gợi ý
+  POST /api/kho/scan/apply {code, action: add|create, qty?, part_id?, fields?}   nhập số lượng của nhãn
+  GET  /api/kho/lcsc?code=C123   thông tin sản phẩm từ LCSC (lưu đệm)
+  POST /api/kho/part/lcsc-fill {id, overwrite?}   điền thông tin còn trống từ LCSC
 
 Mọi POST bắt buộc có header "X-BPI: 1". Trình duyệt không cho trang web lạ tự gắn header này
 khi gửi sang board (CORS), và cookie phiên là SameSite=Strict, nên trang độc hại không bấm hộ được.
@@ -1148,6 +1153,8 @@ class Handler(BaseHTTPRequestHandler):
             return self._send(200, KHO.get_part(int(g("id", "0") or 0)))
         if path == "/api/kho/boms":
             return self._send(200, KHO.boms())
+        if path == "/api/kho/lcsc":
+            return self._send(200, KHO.lcsc_info(g("code")))
         if path == "/api/kho/bom":
             return self._send(200, KHO.bom(int(g("id", "0") or 0), g("boards") or None))
         if path == "/api/kho/bom/shortage.csv":
@@ -1166,6 +1173,13 @@ class Handler(BaseHTTPRequestHandler):
         i = lambda k: int(body.get(k) or 0)  # noqa: E731
         if path == "/api/kho/part":
             return self._send(200, KHO.save_part(body))
+        if path == "/api/kho/scan":
+            return self._send(200, KHO.scan(body.get("code", "")))
+        if path == "/api/kho/scan/apply":
+            return self._send(200, KHO.scan_apply(body.get("code", ""), body.get("action", "add"), body.get("qty"),
+                                                  body.get("part_id"), body.get("fields")))
+        if path == "/api/kho/part/lcsc-fill":
+            return self._send(200, KHO.fill_from_lcsc(i("id"), bool(body.get("overwrite"))))
         if path == "/api/kho/part/delete":
             KHO.delete_part(i("id"))
             return self._send(200, {"ok": True})
@@ -1287,6 +1301,8 @@ class Handler(BaseHTTPRequestHandler):
                 return self.kho_get(path, q)
             except ValueError as e:
                 return self._send(400, {"error": str(e)})
+            except OSError as e:
+                return self._send(502, {"error": f"Lỗi mạng: {e}"})
         if path in ("/iot", "/iot.html"):
             with open(os.path.join(HERE, "iot.html"), "rb") as f:
                 return self._send(200, f.read(), "text/html")

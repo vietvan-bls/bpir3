@@ -8,6 +8,7 @@ import 'package:material_ui/material_ui.dart';
 import '../api.dart';
 import '../main.dart';
 import '../util.dart';
+import 'scan.dart';
 
 /// Kho linh kiện: dùng API /api/kho/* của server trên board (kho.py).
 
@@ -130,10 +131,10 @@ class _KhoScreenState extends State<KhoScreen> {
     final t = Theme.of(context);
     final low = (m?['low'] as num?) ?? 0;
     return Scaffold(
-      floatingActionButton: FloatingActionButton(
-        onPressed: () => _open(const PartEditScreen()),
-        tooltip: 'Thêm linh kiện',
-        child: const Icon(Icons.add),
+      floatingActionButton: FloatingActionButton.extended(
+        onPressed: () => _open(const ScanScreen()),
+        icon: const Icon(Icons.qr_code_scanner),
+        label: const Text('Quét'),
       ),
       body: Column(children: [
         Padding(
@@ -173,6 +174,11 @@ class _KhoScreenState extends State<KhoScreen> {
                 _load();
               },
             ),
+            const SizedBox(width: 8),
+            ActionChip(
+                avatar: const Icon(Icons.add, size: 18),
+                label: const Text('Thêm tay'),
+                onPressed: () => _open(const PartEditScreen())),
             const SizedBox(width: 8),
             ActionChip(
                 avatar: const Icon(Icons.list_alt, size: 18),
@@ -364,7 +370,27 @@ class _PartScreenState extends State<PartScreen> {
                   await Navigator.push(context, MaterialPageRoute(builder: (_) => PartEditScreen(part: p)));
                   _load();
                 }),
-            IconButton(icon: const Icon(Icons.delete_outline), tooltip: 'Xóa', onPressed: _delete),
+            PopupMenuButton<String>(
+              onSelected: (v) async {
+                if (v == 'delete') return _delete();
+                try {
+                  final r = await api.post('/api/kho/part/lcsc-fill', {'id': widget.id, 'overwrite': v == 'lcsc-all'}) as Map;
+                  if (mounted) {
+                    setState(() => _p = r);
+                    toast(context, 'Đã cập nhật từ LCSC');
+                  }
+                } catch (e) {
+                  if (mounted) toast(context, 'Lỗi: $e');
+                }
+              },
+              itemBuilder: (_) => [
+                if ((p['suppliers'] as List).any((s) => s['supplier'] == 'lcsc')) ...const [
+                  PopupMenuItem(value: 'lcsc', child: Text('Điền thông tin còn trống từ LCSC')),
+                  PopupMenuItem(value: 'lcsc-all', child: Text('Lấy lại toàn bộ thông tin từ LCSC')),
+                ],
+                const PopupMenuItem(value: 'delete', child: Text('Xóa linh kiện')),
+              ],
+            ),
           ],
         ],
       ),
@@ -373,6 +399,14 @@ class _PartScreenState extends State<PartScreen> {
           : RefreshIndicator(
               onRefresh: _load,
               child: ListView(padding: const EdgeInsets.all(16), children: [
+                if ('${p['image'] ?? ''}'.isNotEmpty)
+                  Center(
+                    child: ClipRRect(
+                      borderRadius: BorderRadius.circular(12),
+                      child: Image.network('${p['image']}', height: 140, fit: BoxFit.contain,
+                          errorBuilder: (_, _, _) => const SizedBox.shrink()),
+                    ),
+                  ),
                 if (partSub(p).isNotEmpty) Text(partSub(p), style: t.textTheme.bodyMedium),
                 const SizedBox(height: 12),
                 Row(crossAxisAlignment: CrossAxisAlignment.end, children: [

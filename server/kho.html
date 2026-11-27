@@ -108,6 +108,10 @@
   <!-- ===================== Kho ===================== -->
   <section class="tab" data-tab="parts">
     <div class="stats" id="stats"></div>
+    <form class="row section" onsubmit="event.preventDefault(); scanCode($('scanIn').value)">
+      <input id="scanIn" class="inp" style="flex:1 1 240px" placeholder="📷 Quét / dán mã nhãn (QR LCSC, C25804, DataMatrix Digi-Key…) rồi Enter" autocomplete="off">
+      <button type="submit">Đọc mã</button>
+    </form>
     <div class="row section">
       <input id="q" class="inp" style="flex:3 1 220px" placeholder="🔍 Tìm MPN, giá trị, package, mã LCSC/Digi-Key/Mouser, vị trí…" autocomplete="off">
       <select id="fCat" class="inp" style="flex:1 1 120px"><option value="">Mọi loại</option></select>
@@ -289,10 +293,28 @@
     <button onclick="dlgPick.close()">Đóng</button>
   </div>
 </dialog>
+<!-- kết quả quét -->
+<dialog id="dlgScan">
+  <h2 id="scTitle" style="margin:0 0 4px"></h2>
+  <div class="sub" id="scCodes"></div>
+  <div id="scWarn" class="badge warn" style="display:none;margin-top:8px;white-space:normal"></div>
+  <div id="scBody" style="margin-top:10px"></div>
+  <div class="grid2" style="margin-top:12px">
+    <label>Số lượng nhập thêm<input id="scQty" class="inp" type="number"></label>
+    <label>Vị trí<input id="scLoc" class="inp" list="locList" placeholder="để trống = giữ"></label>
+    <label>Cảnh báo khi ≤<input id="scMin" class="inp" type="number" min="0"></label>
+  </div>
+  <div class="row" style="margin-top:16px;justify-content:flex-end">
+    <button onclick="dlgScan.close()">Bỏ qua</button><span class="spacer"></span>
+    <button id="scPick" onclick="scanPickOther()">Là linh kiện khác…</button>
+    <button class="primary" id="scOk" onclick="scanApply()"></button>
+  </div>
+</dialog>
 <div id="toast"></div>
 
 <script>
 const $ = (id) => document.getElementById(id);
+const dlgScan = $("dlgScan");
 const dlgPart = $("dlgPart"), dlgEdit = $("dlgEdit"), dlgMap = $("dlgMap"), dlgPick = $("dlgPick");
 const SUP = {lcsc: "LCSC", digikey: "Digi-Key", mouser: "Mouser", taobao: "Taobao", other: "Khác"};
 function esc(s) { return String(s ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c])); }
@@ -364,6 +386,53 @@ async function loadLow() {
 }
 function refreshAll() { loadMeta(); loadParts(); if (curTab === "low") loadLow(); if (curBom) openBom(curBom.id); }
 
+// ------------------------------------------------ quét / dán mã
+let scan = null, scanCodeStr = "", scanPickId = null;
+async function scanCode(code) {
+  code = (code || "").trim(); if (!code) return;
+  $("scanIn").value = "";
+  try { scan = await api("/api/kho/scan", {code}); } catch (e) { return toast("Lỗi: " + e.message); }
+  scanCodeStr = code; scanPickId = null;
+  const lab = scan.label;
+  if (lab.query) {   // chữ thường: coi như tìm kiếm
+    if (scan.part) return openPart(scan.part.id);
+    $("q").value = lab.query; showTab("parts"); return loadParts();
+  }
+  $("scCodes").textContent = [lab.lcsc && "LCSC " + lab.lcsc, lab.digikey && "Digi-Key " + lab.digikey, lab.mpn && "MPN " + lab.mpn,
+                              lab.qty && "SL nhãn " + lab.qty, lab.order && "đơn " + lab.order].filter(Boolean).join(" · ");
+  $("scWarn").style.display = scan.already ? "" : "none";
+  if (scan.already) $("scWarn").textContent = `⚠️ Nhãn này đã nhập lúc ${fmtT(scan.already.ts)} (+${scan.already.qty}). Để 0 nếu chỉ xem.`;
+  $("scQty").value = scan.already ? 0 : (lab.qty || 0); $("scMin").value = "";
+  renderScan(); dlgScan.showModal(); $("scQty").focus();
+}
+function renderScan() {
+  const p = scan.part, info = scan.lcsc_info;
+  if (p) {
+    $("scTitle").textContent = partTitle(p);
+    $("scBody").innerHTML = `<div class="sub">${esc(partSub(p))}</div><div style="margin-top:6px">Trong kho: <b>${p.qty}</b>${p.location ? " · 📍 " + esc(p.location) : ""}</div>`;
+    $("scOk").textContent = "Nhập vào kho"; $("scLoc").placeholder = "để trống = giữ";
+  } else {
+    $("scTitle").textContent = "Chưa có trong kho";
+    $("scBody").innerHTML = info ? `<div class="row" style="align-items:flex-start">${info.image ? `<img src="${esc(info.image)}" style="width:64px;height:64px;object-fit:cover;border-radius:8px">` : ""}
+      <div style="flex:1"><div class="mpn">${esc(info.mpn || scan.label.mpn)}</div><div class="sub">${esc([info.value, info.package, info.manufacturer, info.category, info.name].filter(Boolean).join(" · "))}</div></div></div>`
+      : `<div class="sub">${scan.lcsc_error ? "Không tra được LCSC: " + esc(scan.lcsc_error) + ". " : ""}Tạo mới rồi điền thông tin sau.</div>`;
+    $("scOk").textContent = "Tạo mới & nhập"; $("scLoc").placeholder = "vd Hộp A";
+  }
+}
+async function scanApply() {
+  const fields = {}; if ($("scLoc").value.trim()) fields.location = $("scLoc").value.trim(); if ($("scMin").value !== "") fields.min_qty = +$("scMin").value;
+  const pid = scanPickId || (scan.part && scan.part.id);
+  try {
+    const p = await api("/api/kho/scan/apply", {code: scanCodeStr, action: pid ? "add" : "create", part_id: pid, qty: +$("scQty").value || 0, fields});
+    dlgScan.close(); toast(`${partTitle(p)}: còn ${p.qty}`); refreshAll(); $("scanIn").focus();
+  } catch (e) { toast("Lỗi: " + e.message); }
+}
+function scanPickOther() {
+  pickLine = null; $("pkInfo").textContent = "Chọn linh kiện để cộng số lượng của nhãn vào"; $("pkQ").value = scan.label.mpn || "";
+  $("pkDnp").style.display = "none"; dlgPick.showModal(); searchPick();
+}
+$("scanIn").addEventListener("keydown", e => { if (e.key === "Enter") { e.preventDefault(); scanCode($("scanIn").value); } });
+
 // ------------------------------------------------ chi tiết
 let curPart = null;
 async function openPart(id) {
@@ -379,11 +448,19 @@ function renderPart() {
                 ["Đơn giá", p.price != null ? p.price + " " + (p.currency || "USD") : ""], ["Ghi chú", p.notes]];
   $("dpInfo").innerHTML = info.filter(x => x[1]).map(([l, v]) => `<div><div class="label">${l}</div>${esc(v)}</div>`).join("")
     + (p.datasheet ? `<div><div class="label">Datasheet</div><a href="${esc(p.datasheet)}" target="_blank" rel="noopener">mở</a></div>` : "");
-  $("dpSups").innerHTML = p.suppliers.length ? '<div class="label">Mua ở</div>' + supTags(p.suppliers) : "";
+  const hasLcsc = p.suppliers.some(s => s.supplier === "lcsc");
+  $("dpSups").innerHTML = (p.image ? `<img src="${esc(p.image)}" style="float:right;width:90px;height:90px;object-fit:contain;border-radius:8px;margin-left:8px">` : "")
+    + (p.suppliers.length ? '<div class="label">Mua ở</div>' + supTags(p.suppliers) : "")
+    + (hasLcsc ? ` <button class="small" onclick="lcscFill()" title="Điền mô tả, package, hãng, datasheet, ảnh còn trống">↻ Điền từ LCSC</button>` : "")
+    + '<div style="clear:both"></div>';
   $("dpBoms").innerHTML = p.boms.length ? "Dùng trong BOM: " + p.boms.map(b => `<a href="#" onclick="dlgPart.close();showTab('bom');openBom(${b.id});return false">${esc(b.name)}</a> (${b.qty}/bo)`).join(", ") : "";
   $("dpLog").innerHTML = p.log.length ? p.log.map(l => `<tr><td class="sub" style="white-space:nowrap">${fmtT(l.ts)}</td>
     <td class="num" style="color:${l.delta > 0 ? "var(--ok)" : "var(--bad)"}">${l.delta > 0 ? "+" : ""}${l.delta}</td>
     <td class="num">${l.qty_after}</td><td>${esc(l.reason)}</td></tr>`).join("") : '<tr><td class="sub">Chưa có</td></tr>';
+}
+async function lcscFill() {
+  try { curPart = await api("/api/kho/part/lcsc-fill", {id: curPart.id}); renderPart(); refreshAll(); toast("Đã cập nhật từ LCSC"); }
+  catch (e) { toast("Lỗi: " + e.message); }
 }
 async function quick(delta) {
   if (!delta) return;
@@ -558,7 +635,7 @@ let pickLine = null, pkTimer = null;
 function openPick(lineId) {
   pickLine = curBom.lines.find(l => l.id === lineId);
   $("pkInfo").textContent = `Dòng ${pickLine.designator || pickLine.line}: ${[pickLine.mpn, pickLine.value, pickLine.package].filter(Boolean).join(" · ")}`;
-  $("pkDnp").textContent = pickLine.dnp ? "Lắp lại dòng này" : "Không lắp (DNP)";
+  $("pkDnp").style.display = ""; $("pkDnp").textContent = pickLine.dnp ? "Lắp lại dòng này" : "Không lắp (DNP)";
   $("pkQ").value = pickLine.mpn || pickLine.value || ""; dlgPick.showModal(); searchPick();
 }
 async function searchPick() {
@@ -570,6 +647,11 @@ async function searchPick() {
 }
 $("pkQ").addEventListener("input", () => { clearTimeout(pkTimer); pkTimer = setTimeout(searchPick, 250); });
 async function pickPart(pid) {
+  if (!pickLine) {   // đang chọn cho kết quả quét
+    dlgPick.close(); $("pkDnp").style.display = "";
+    if (!pid) return;
+    scanPickId = pid; scan.part = (await api("/api/kho/part?id=" + pid)); renderScan(); return;
+  }
   try { await api("/api/kho/bom/line", {line_id: pickLine.id, part_id: pid}); dlgPick.close(); openBom(curBom.id, +$("bomBoards").value); }
   catch (e) { toast("Lỗi: " + e.message); }
 }
