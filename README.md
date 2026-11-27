@@ -1,16 +1,50 @@
 # bpir3
 
-Dự án liên quan đến Banana Pi BPI-R3 (MediaTek MT7986 / Filogic 830) chạy OpenWrt.
+Dự án Banana Pi BPI-R3 (MediaTek MT7986 / Filogic 830, 4× Cortex-A53, 2 GB RAM) chạy OpenWrt SNAPSHOT:
+router + web server quản lý (Python, cổng 8080) + app điện thoại (Flutter) + nhiều dịch vụ (camera, nhạc, IoT/MQTT,
+kho linh kiện, VPN cho WiFi, debug STM32 từ xa).
+
+> **Làm tiếp ở phiên Claude mới?** Đọc [CLAUDE.md](CLAUDE.md): cách dựng lại môi trường, vào board, test, deploy,
+> các lỗi đã gặp và việc còn dang dở.
+
+## Tổng quan
+
+```
+ Internet ─┬─ Cloudflare quick tunnel (link trycloudflare đổi mỗi lần khởi động) ──┐
+           ├─ Tailscale Funnel: https://bpi-r3.tail24dd60.ts.net (cố định) ───────┤
+           └─ Tailscale tailnet (riêng của chủ): 100.121.201.107 ─────────────────┤
+                                                                                  ▼
+ Mạng nhà (Wi-Fi “VQH”, 192.168.1.x) ◄── wwan ── BPI-R3 (OpenWrt) ── LAN br-lan 192.168.2.1/24
+                                                  │  Wi-Fi “BPI-R3” / “BPI-R3-5G” (máy, ESP32, điện thoại)
+                                                  ├─ web server :8080  (server/app.py) ◄── app Android
+                                                  ├─ Mosquitto :1883 (+ TLS :8443 qua Funnel)
+                                                  ├─ OpenOCD :3333/:4444 (ST-Link → STM32) qua tailnet
+                                                  └─ USB: webcam UVC, card âm thanh, ST-Link (qua hub)
+```
+
+| Tính năng | Ở đâu | Mục README |
+|---|---|---|
+| Bảng điều khiển: tổng quan, camera + nhận dạng người, Wi-Fi WAN, LAN/DHCP, nhạc + loa USB, thống kê truy cập, LED, log, hệ thống | `/` | [Web server](#web-server-mẫu-server) |
+| Kho linh kiện: tìm, nhập đơn LCSC/Digi-Key/Mouser, BOM có/thiếu, sắp hết, quét QR LCSC, chụp nhãn (OCR), nhiều khách | `/kho` + app | [Kho linh kiện](#kho-linh-kiện-kho-serverkhopy-serverkhohtml) |
+| IoT: MQTT broker, dữ liệu + biểu đồ, nút điều khiển, tài khoản thiết bị, mật khẩu riêng | `/iot` | [MQTT](#mqtt-broker-iot) |
+| VPN cho Wi-Fi (đổi nước): VPN Gate miễn phí / file WireGuard-OpenVPN, kill-switch | tab 🌍 VPN + app | [VPN](#vpn-cho-wifi-bpi-r3-đổi-nước-servervpnpy-tab--vpn) |
+| Debug STM32 từ xa qua ST-Link + OpenOCD | tailnet :3333 | [Debug STM32](#debug-stm32-từ-xa-st-link-cắm-vào-board) |
+| Truy cập từ xa: Tailscale Funnel (tên cố định), Cloudflare quick tunnel, SSH, LuCI | | [Tailscale](#tên-cố-định-qua-tailscale-funnel-bpi-r3tail24dd60tsnet), [Cloudflare](#truy-cập-từ-internet-cloudflare-quick-tunnel) |
+| App Android (Flutter): mọi chức năng trên + quét mã, OCR, chế độ khách kho | `out/app/bpir3-arm64.apk` | [App](#7-app-điện-thoại-android--ios) |
+| Build U-Boot/TF-A, image SD, OpenWrt ImageBuilder | `build.sh`, `mksdimg.sh`, `openwrt.sh` | [Build từ source](#build-từ-source-bootloader-openwrt-app) |
+| ESP32 mẫu gửi MQTT/TLS từ xa | `firmware/esp32-mqtt/` | [Thiết bị ở xa](#thiết-bị-ở-xa-esp32-qua-mqtttls) |
 
 Thư mục trong repo:
 
 | Thư mục | Nội dung |
 |---|---|
-| `server/` | Web server chạy trên board (cổng 8080) + dịch vụ procd + công cụ Windows |
-| `tools/` | Script tiện ích chạy trên board (mở rộng thẻ nhớ, đo tốc độ nhận dạng) |
-| `app/` | App điện thoại Flutter (Android + iOS) điều khiển web server |
+| `server/` | Web server chạy trên board (cổng 8080), module (kho, iot, vpn, camera…), dịch vụ procd `*.init`, cấu hình Mosquitto / OpenOCD, công cụ Windows |
+| `app/` | App Flutter (Android + iOS) — `lib/api.dart` (client API), `lib/screens/*` |
+| `firmware/esp32-mqtt/` | Sketch Arduino ESP32 MQTT/TLS (chưa biên dịch thử) |
+| `tools/` | Script chạy trên board (mở rộng thẻ nhớ, đo tốc độ nhận dạng) |
 | `build.sh`, `mksdimg.sh`, `openwrt.sh` | Build U-Boot/TF-A, tạo image SD, build OpenWrt bằng ImageBuilder |
-| `out/` | Bootloader đã build sẵn + APK Android |
+| `out/` | Bootloader đã build (`bl2.img`, `fip.bin`, `u-boot.bin`) + APK (`out/app/bpir3-arm64.apk`) |
+| `CLAUDE.md` | Ghi chú bàn giao cho phiên Claude sau |
 
 ## Board
 
@@ -31,9 +65,12 @@ Thư mục trong repo:
 
 | Thành phần | Ghi chú |
 |---|---|
-| Gói | `luci python3-light python3-urllib python3-logging python3-numpy python3-openssl ffmpeg cloudflared nlbwmon minidlna kmod-usb-audio alsa-utils` + gói mở rộng thẻ nhớ |
-| Dịch vụ tự chạy | `myserver` (web 8080), `cftunnel` (link web công khai), `sshtunnel` (SSH từ xa), `mosquitto` (MQTT 1883), `minidlna`, `nlbwmon` |
-| `/mnt/data` | phân vùng p8 ~57 GB: `camera/`, `music/`, `traffic/`, `nlbwmon/` |
+| Gói | `luci python3-light python3-urllib python3-logging python3-numpy python3-openssl python3-sqlite3 python3-paho-mqtt ffmpeg cloudflared nlbwmon minidlna kmod-usb-audio alsa-utils kmod-video-uvc mosquitto-ssl mosquitto-client-ssl tailscale openocd stlink-st-* openvpn-openssl wireguard-tools kmod-wireguard ip-full` + gói mở rộng thẻ nhớ |
+| Dịch vụ tự chạy | `myserver` (web 8080), `cftunnel` (link web công khai), `sshtunnel` (SSH từ xa), `mosquitto` (MQTT 1883), `tailscale` (Funnel 443/8443, serve 3333/4444), `openocd-stm32` (GDB server), `bpi-vpn` (VPN cho Wi-Fi, chỉ khi bật), `minidlna`, `nlbwmon` |
+| `/mnt/data` | phân vùng p8 ~57 GB: `camera/`, `music/`, `traffic/`, `nlbwmon/`, `iot/` (iot.db, controls.json, accounts.json), `kho/` (kho.db + `backup/`), `mosquitto/`, `stm32-backup/` (firmware gốc STM32) |
+| Bí mật (không có trong repo) | `/etc/bpi-web-auth.json` (mật khẩu quản trị), `/etc/bpi-iot-auth.json` (mật khẩu IoT), `/etc/bpi-mqtt.json` (tài khoản MQTT `server`), `/etc/mosquitto/passwd`, `/etc/bpi-vpn/` (cấu hình + khóa VPN), tài khoản khách kho trong `kho.db` |
+| Firewall do dự án thêm | zone `bpivpn` + forwarding `lan → bpivpn` + rule `BPI-VPN-block-IPv6` (bật khi VPN bật) |
+| Thiết bị USB | hub `1a40:0101`; ST-Link V2 `0483:3748` (đích STM32F1 64 KB); webcam `0c45:636b` và card âm thanh “Viet audio” có lúc không cắm |
 | dropbear | `main`: cổng 22, mọi interface, cho mật khẩu + khóa; `remote`: `127.0.0.1:2222`, chỉ khóa (cho SSH từ xa) |
 | dnsmasq | ghi log truy vấn vào `/tmp/dnsmasq.log` (thống kê truy cập) |
 | firewall | rule `Allow-MyServer-8080` cho dải `192.168.1.0/24` (mạng nhà) vào cổng 8080 |
@@ -588,14 +625,20 @@ Từ image SD, U-Boot của OpenWrt có menu để cài OpenWrt sang NAND/eMMC.
 
 ### 7. App điện thoại (Android + iOS)
 
-App Flutter trong `app/`, điều khiển "BPI-R3 Server" (tổng quan, camera, Wi-Fi, LAN, nhạc, truy cập web, LED, log, hệ thống).
+App Flutter trong `app/` (bản 1.5.0), dùng API của "BPI-R3 Server". Thanh dưới: **Tổng quan · Camera · Kho · Nhạc · Thêm**
+(Thêm: VPN cho Wi-Fi, Mạng (Wi-Fi/LAN/máy kết nối), Truy cập web, LED, Log, Hệ thống).
 
-- **Android**: cài `out/app/bpir3-arm64.apk` (bật "Cài ứng dụng không rõ nguồn gốc").
-- Mở app → nhập **link công khai** (trycloudflare) và/hoặc **địa chỉ trong mạng** (vd `192.168.2.1:8080`).
-  Ở nhà app dùng địa chỉ trong mạng trước (không cần mật khẩu); ra ngoài dùng link công khai + mật khẩu.
-  App tự nhớ link công khai mới nhất mỗi lần kết nối được.
+- **Android**: cài `out/app/bpir3-arm64.apk` (arm64, ~39 MB vì có ML Kit đọc mã + đọc chữ chạy offline).
+- Mở app → **link công khai** (nên dùng `https://bpi-r3.tail24dd60.ts.net`, không đổi) và/hoặc **địa chỉ trong mạng**
+  (`192.168.2.1:8080`, ở nhà dùng trước, không cần mật khẩu). Đăng nhập: **Quản trị** (mật khẩu web panel) hoặc
+  **Khách kho** (tài khoản kho do chủ cấp → chỉ màn Kho, chỉ xem). App nhớ link công khai mới nhất và cookie đăng nhập.
+- Kho trong app: chọn “Kho của”, quét QR LCSC / DataMatrix Digi-Key (camera, `mobile_scanner`), nhập mã LCSC (tự lấy thông số),
+  chụp nhãn đọc chữ (ML Kit), thêm/sửa, ±/kiểm kê, nhập file đơn hàng, BOM (có/thiếu, chọn lại linh kiện, lắp bo).
+- Code: `lib/api.dart` (client: cookie quản trị + cookie khách, LAN trước rồi công khai), `lib/screens/` (mỗi màn một file),
+  `test/label_text_test.dart` (test bộ tách chữ OCR).
+- Chưa thử trên điện thoại thật: quét camera, OCR (container không có camera); giao diện đã kiểm tra bằng bản web.
 
-Build lại (cần Flutter ≥ 3.50, Android SDK):
+Build lại (cần Flutter ≥ 3.50, Android SDK; Flutter 3.47+ dùng `package:material_ui/material_ui.dart` thay `flutter/material.dart`):
 
 ```bash
 cd app && flutter build apk --release --split-per-abi --target-platform android-arm64
