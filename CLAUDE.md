@@ -36,7 +36,7 @@ mà phiên được giao; người dùng muốn thì gộp lại vào `main`.
 apt-get install -y gcc-aarch64-linux-gnu flex bison bc device-tree-compiler swig libgnutls28-dev uuid-dev libssl-dev \
   gdisk dosfstools mtools e2fsprogs zstd gawk xsltproc rsync wget unzip file openjdk-17-jdk-headless \
   mosquitto mosquitto-clients gcc-arm-none-eabi libnewlib-arm-none-eabi gdb-multiarch ffmpeg psmisc
-pip install paho-mqtt==2.1.0 openpyxl pysocks
+pip install paho-mqtt==2.1.0 openpyxl pysocks yowasp-yosys yowasp-nextpnr-himbaechel-gowin apycula   # 3 gói cuối: FPGA
 ```
 - **Flutter** (stable, đã dùng 3.50 / Dart 3.14): tải archive theo `releases_linux.json` của `storage.googleapis.com/flutter_infra_release`,
   giải nén vào `/opt/flutter`, `git config --global --add safe.directory /opt/flutter`.
@@ -93,6 +93,9 @@ cp build/app/outputs/flutter-apk/app-arm64-v8a-release.apk ../out/app/bpir3-arm6
 - VPN Gate cần `--data-ciphers …:AES-128-CBC` và `--tls-cipher DEFAULT:@SECLEVEL=0` (máy chủ cũ).
 - SQLite tái sử dụng id linh kiện đã xóa → `save_part` dọn `stock_log`/`part_suppliers` sót khi tạo mới.
 - API tìm kiếm của LCSC (`/ftps/wm/search/global`) trả 403 → không tra được MPN → mã LCSC; chỉ API chi tiết theo mã C… dùng được.
+- GitHub chỉ cho clone repo công khai, **không tải được file Releases** của repo khác (oss-cad-suite) → FPGA dùng bản YoWASP từ PyPI;
+  thư viện arm64 lấy `.deb` từ `ports.ubuntu.com`.
+- Tang Nano 4K: BL702 chỉ có JTAG, **không có UART** qua USB (đã dò cả 29 chân).
 - `apk search` có thể rỗng nếu chỉ mục cũ → `apk update` trước.
 
 ## 5. Trạng thái hiện tại (cuối phiên trước)
@@ -100,6 +103,7 @@ cp build/app/outputs/flutter-apk/app-arm64-v8a-release.apk ../out/app/bpir3-arm6
 - Đã chạy trên board: web server (mọi tab), kho (dữ liệu thật của chủ: 4 loại / ~3.5k con, chưa có khách), IoT + Mosquitto
   (tài khoản `iot`, `server`, `esp-xa`), Tailscale Funnel, OpenOCD + ST-Link (đích STM32F1, firmware gốc sao lưu ở
   `/mnt/data/stm32-backup/`), VPN (**người dùng đang bật VPN Gate Nhật**), webcam đã được hỗ trợ nhưng gần đây không thấy cắm.
+- FPGA Tang Nano 4K cắm USB board, `openFPGALoader` ở `/mnt/data/fpga/` (README mục FPGA), đang nạp `hello.fs` (SRAM).
 - App Android 1.5.0 (`out/app/bpir3-arm64.apk`).
 - Mật khẩu quản trị web panel đã từng lộ trong chat phiên trước → đã nhắc người dùng đổi (chưa rõ đã đổi chưa).
 

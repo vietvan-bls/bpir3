@@ -19,7 +19,7 @@ kho linh kiện, VPN cho WiFi, debug STM32 từ xa).
                                                   ├─ web server :8080  (server/app.py) ◄── app Android
                                                   ├─ Mosquitto :1883 (+ TLS :8443 qua Funnel)
                                                   ├─ OpenOCD :3333/:4444 (ST-Link → STM32) qua tailnet
-                                                  └─ USB: webcam UVC, card âm thanh, ST-Link (qua hub)
+                                                  └─ USB: webcam UVC, card âm thanh, ST-Link (qua hub), Tang Nano 4K (FPGA)
 ```
 
 | Tính năng | Ở đâu | Mục README |
@@ -29,6 +29,7 @@ kho linh kiện, VPN cho WiFi, debug STM32 từ xa).
 | IoT: MQTT broker, dữ liệu + biểu đồ, nút điều khiển, tài khoản thiết bị, mật khẩu riêng | `/iot` | [MQTT](#mqtt-broker-iot) |
 | VPN cho Wi-Fi (đổi nước): VPN Gate miễn phí / file WireGuard-OpenVPN, kill-switch | tab 🌍 VPN + app | [VPN](#vpn-cho-wifi-bpi-r3-đổi-nước-servervpnpy-tab--vpn) |
 | Debug STM32 từ xa qua ST-Link + OpenOCD | tailnet :3333 | [Debug STM32](#debug-stm32-từ-xa-st-link-cắm-vào-board) |
+| FPGA Tang Nano 4K: build mã nguồn mở trong container, nạp qua USB của board | `fpga/` | [FPGA](#fpga-tang-nano-4k-cắm-usb-vào-board-fpga) |
 | Truy cập từ xa: Tailscale Funnel (tên cố định), Cloudflare quick tunnel, SSH, LuCI | | [Tailscale](#tên-cố-định-qua-tailscale-funnel-bpi-r3tail24dd60tsnet), [Cloudflare](#truy-cập-từ-internet-cloudflare-quick-tunnel) |
 | App Android (Flutter): mọi chức năng trên + quét mã, OCR, chế độ khách kho | `out/app/bpir3-arm64.apk` | [App](#7-app-điện-thoại-android--ios) |
 | Build U-Boot/TF-A, image SD, OpenWrt ImageBuilder | `build.sh`, `mksdimg.sh`, `openwrt.sh` | [Build từ source](#build-từ-source-bootloader-openwrt-app) |
@@ -41,9 +42,10 @@ Thư mục trong repo:
 | `server/` | Web server chạy trên board (cổng 8080), module (kho, iot, vpn, camera…), dịch vụ procd `*.init`, cấu hình Mosquitto / OpenOCD, công cụ Windows |
 | `app/` | App Flutter (Android + iOS) — `lib/api.dart` (client API), `lib/screens/*` |
 | `firmware/esp32-mqtt/` | Sketch Arduino ESP32 MQTT/TLS (chưa biên dịch thử) |
+| `fpga/` | Thiết kế FPGA (Tang Nano 4K), script build/nạp, mã nguồn `ftdi-uart`, script build `openFPGALoader` cho board |
 | `tools/` | Script chạy trên board (mở rộng thẻ nhớ, đo tốc độ nhận dạng) |
 | `build.sh`, `mksdimg.sh`, `openwrt.sh` | Build U-Boot/TF-A, tạo image SD, build OpenWrt bằng ImageBuilder |
-| `out/` | Bootloader đã build (`bl2.img`, `fip.bin`, `u-boot.bin`) + APK (`out/app/bpir3-arm64.apk`) |
+| `out/` | Bootloader đã build (`bl2.img`, `fip.bin`, `u-boot.bin`) + APK (`out/app/bpir3-arm64.apk`) + `out/fpga/` (openFPGALoader, ftdi-uart cho aarch64) |
 | `CLAUDE.md` | Ghi chú bàn giao cho phiên Claude sau |
 
 ## Board
@@ -445,6 +447,35 @@ bỏ chọn *Autostart local GDB server* / chọn **Connect to remote GDB server
 Keil / CubeProgrammer cần ST-Link “thật” trên máy → dùng USB/IP (chưa cài).
 
 Telnet OpenOCD (`telnet 100.121.201.107 4444`): `reset halt`, `reset run`, `flash info 0`, `mdw 0x08000000 4`…
+
+## FPGA Tang Nano 4K (cắm USB vào board) ([fpga/](fpga/))
+
+Tang Nano 4K (Gowin **GW1NSR-4C**: 4.6k LUT, Cortex-M3 cứng, HyperRAM, HDMI, thạch anh 27 MHz) cắm vào USB của BPI-R3.
+Chip BL702 trên board giả lập FTDI 2232 (`0403:6010`, “SIPEED JTAG Debugger”) và **chỉ làm JTAG**. Không có USB-UART:
+đã thử dò cả 29 chân I/O mà không chân nào truyền được dữ liệu lên. Cần UART thì cắm thêm một module USB-UART 3.3 V vào board
+(TX chân 44, RX chân 46 như trong `tangnano4k.cst`), rồi đọc bằng `fpga/tools/ftdi-uart` nếu module là FTDI 2232, hoặc thêm
+driver serial cho kernel.
+
+Quy trình: **build trong container (toolchain mã nguồn mở) → gửi `.fs` qua SSH → board nạp bằng `openFPGALoader`**.
+
+```sh
+pip install yowasp-yosys yowasp-nextpnr-himbaechel-gowin apycula   # Yosys + nextpnr-himbaechel + Apicula (bản WebAssembly, ~vài trăm MB)
+fpga/tangnano4k/build.sh hello.v            # → fpga/tangnano4k/build/hello.fs (~20 s)
+BPI_SSH=b fpga/flash.sh fpga/tangnano4k/build/hello.fs        # nạp SRAM (mất khi rút điện)
+BPI_SSH=b fpga/flash.sh fpga/tangnano4k/build/hello.fs tangnano4k -f   # ghi flash
+```
+
+- Trên board: `/mnt/data/fpga/openFPGALoader` (v1.2.0, biên dịch **tĩnh** glibc nên chạy được trên musl và không cần gói
+  nào). Binary nằm ở `out/fpga/`; build lại bằng `fpga/tools/build-openfpgaloader.sh`. Lệnh: `openFPGALoader --scan-usb`,
+  `openFPGALoader -b tangnano4k --detect` (ra `GW1NSR-4C`, idcode `0x100981b`).
+- Bản build này có sẵn **XVC server** (`openFPGALoader --xvc`…) nên sau này cắm cáp JTAG cho Xilinx (EBAZ4205 / Zynq) là Vivado
+  dùng được qua mạng.
+- `fpga/tangnano4k/hello.v`: LED (chân 10) nháy 1 Hz, giữ KEY (chân 15) thì nháy nhanh gấp 4, RST (chân 14) đếm lại từ đầu.
+  UART 115200 trên chân 44/46 gửi `Hello Tang Nano 4K #xxxx` và gửi trả ký tự nhận được (cần module USB-UART ngoài).
+- Chân: lấy từ `examples/tangnano4k.cst` của [Apicula](https://github.com/YosysHQ/apicula). Thiết bị nextpnr là
+  `GW1NSR-LV4CQN48PC7/I6`, `--vopt family=GW1NS-4`; pack bằng `gowin_pack -d GW1NS-4 --mspi_as_gpio`. Apicula có cả ví dụ
+  Cortex-M3 (`emcu-*.v`), HDMI (`DVI/`), PLL.
+- OpenOCD (ST-Link) vẫn chạy song song được vì nó không dùng cáp FTDI.
 
 ## Truy cập từ Internet (Cloudflare quick tunnel)
 
