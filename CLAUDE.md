@@ -4,7 +4,8 @@ Người dùng nói tiếng Việt, thích làm nhanh ("build đi", "push nhé")
 Repo này là toàn bộ dự án BPI-R3: xem [README.md](README.md) cho hướng dẫn từng tính năng. File này là ghi chú *cách làm việc*.
 
 **Repo đang PUBLIC** → không bao giờ commit mật khẩu, khóa, cookie, token, mật khẩu MQTT/khách. Chỉ ghi chỗ chúng nằm trên board.
-Nhánh làm việc: `claude/festive-brahmagupta-nrzyez` (chưa có PR; `main` chỉ có commit đầu).
+Nhánh: toàn bộ công việc đã gộp vào `main` (fast-forward từ `claude/festive-brahmagupta-nrzyez`). Làm tiếp trên nhánh
+mà phiên được giao; người dùng muốn thì gộp lại vào `main`.
 
 ## 1. Board và cách vào
 
