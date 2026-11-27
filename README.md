@@ -349,6 +349,24 @@ Cài: [server/tailscale-funnel.sh](server/tailscale-funnel.sh) (lần đầu in 
   có sẵn ISRG Root X1/X2, LWT online/offline, nhận lệnh `iot/<tên>/set` bật tắt LED, gửi JSON mỗi 10 giây).
   Chép `secrets.example.h` thành `secrets.h` rồi điền Wi-Fi và tài khoản.
 
+## VPN cho WiFi BPI-R3 (đổi nước) ([server/vpn.py](server/vpn.py), tab **🌍 VPN**)
+
+Bật thì mọi máy bắt WiFi BPI-R3 ra Internet qua VPN (Google… thấy IP nước đó); tắt là về mạng thường.
+
+- **VPN Gate** (miễn phí, không tài khoản): chọn nước trong danh sách (Nhật, Hàn, Thái, Mỹ… thay đổi liên tục) → board
+  tải cấu hình OpenVPN và kết nối. Máy chủ tình nguyện, **có ghi log**, tốc độ thất thường → chỉ để đổi vị trí xem nội dung.
+- **File của bạn**: WireGuard `.conf` (Proton VPN Free, Mullvad, Surfshark…) hoặc OpenVPN `.ovpn` (+ user/mật khẩu, gửi qua
+  header, không vào URL/log). Khóa lưu ở `/etc/bpi-vpn` (600). Dòng nguy hiểm trong `.ovpn` (`up`, `script-security`…) bị bỏ.
+- Định tuyến theo nguồn: chỉ `192.168.2.0/24` đi VPN (`ip rule` 9000/9001 + bảng 100); đích trong mạng, board, Tailscale đi
+  thẳng; board tự đi mạng thường (link công khai, MQTT, Tailscale không ảnh hưởng).
+- **Kill-switch**: bảng 100 có `unreachable default` → VPN rớt thì máy trong mạng mất Internet, không lộ IP thật.
+- **DNS** qua VPN (`server=IP@tunvpn`, strict-order; DNS thường chỉ là dự phòng cho chính board). **IPv6** từ LAN bị chặn khi bật.
+- Firewall: zone `bpivpn` (masquerade) + forwarding `lan → bpivpn`; rule `BPI-VPN-block-IPv6`.
+- Dịch vụ `/etc/init.d/bpi-vpn` ([server/vpn.init](server/vpn.init)) chạy `vpn.py run`, tự kết nối lại; log `/tmp/bpi-vpn.log`.
+- Gói: `apk add openvpn-openssl wireguard-tools kmod-wireguard ip-full`.
+- Đã thử: VPN Gate Nhật → máy trong mạng ra IP Nhật, board vẫn IP Việt Nam; giết OpenVPN → máy trong mạng bị chặn
+  (kill-switch); tắt → quy tắc + DNS trở lại như cũ.
+
 ## Debug STM32 từ xa (ST-Link cắm vào board)
 
 ST-Link cắm USB board → OpenOCD trên board làm GDB server → máy tính debug qua **Tailscale** (mạng riêng của bạn).

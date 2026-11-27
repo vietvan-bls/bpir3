@@ -40,6 +40,11 @@ Quyền truy cập:
                           volume{volume}|shuffle{on}|repeat{on}}
   GET  /api/traffic?day=YYYY-MM-DD   máy nào vào trang nào trong ngày (log DNS, traffic.py) + dung lượng (nlbwmon)
   GET  /api/traffic/recent?mac=&since=  các tên miền vừa truy cập
+  GET  /api/vpn/status?check=1   VPN cho mạng WiFi: bật/tắt, đã kết nối, IP + nước ra Internet
+  GET  /api/vpn/vpngate          danh sách nước / máy chủ VPN Gate (miễn phí)
+  POST /api/vpn/vpngate {cc, host?}   dùng VPN Gate nước đó
+  POST /api/vpn/upload?name=     thân = file WireGuard .conf / OpenVPN .ovpn (header X-VPN-User / X-VPN-Pass nếu cần)
+  POST /api/vpn/enable {on}      bật / tắt VPN cho mạng WiFi
 
 IoT (iot.py, trang /iot): mật khẩu riêng, khác mật khẩu quản trị. Quản trị viên (trong mạng nội bộ hoặc đã
 đăng nhập) cũng vào được; người chỉ có mật khẩu IoT thì chỉ vào được /iot và /api/iot/*.
@@ -87,6 +92,7 @@ Kho linh kiện (kho.py, trang /kho), cần quyền quản trị:
 Mọi POST bắt buộc có header "X-BPI: 1". Trình duyệt không cho trang web lạ tự gắn header này
 khi gửi sang board (CORS), và cookie phiên là SameSite=Strict, nên trang độc hại không bấm hộ được.
 """
+import base64
 import hashlib
 import hmac
 import ipaddress
@@ -775,6 +781,14 @@ except Exception as e:  # noqa: BLE001
     TRAFFIC = None
 
 
+# ---------------------------------------------------------------- VPN cho mạng WiFi (vpn.py)
+try:
+    import vpn as _vpn
+except Exception as e:  # noqa: BLE001
+    print(f"VPN tắt: {e}", flush=True)
+    _vpn = None
+
+
 # ---------------------------------------------------------------- Kho linh kiện (kho.py)
 try:
     import kho as _kho
@@ -1286,6 +1300,22 @@ class Handler(BaseHTTPRequestHandler):
             return self._send(200, {"ok": True}, headers={"Set-Cookie": self.cookie_header("", 0, _kho.KHO_COOKIE)})
         return self._send(404, {"error": "not found"})
 
+    def vpn_upload(self, url, length):
+        """POST /api/vpn/upload?name=: thân = file cấu hình; tài khoản (nếu cần) qua header, không qua URL / log."""
+        if self.headers.get("X-BPI") != "1" or not self.is_admin():
+            self.close_connection = True
+            return self.need_login() if self.headers.get("X-BPI") == "1" else self._send(400, {"error": "thiếu header X-BPI"})
+        if _vpn is None or length > 200_000:
+            self.close_connection = True
+            return self._send(413, {"error": "File quá lớn"})
+        data = self.rfile.read(length) if length else b""
+        q = parse_qs(url.query)
+        dec = lambda h: base64.b64decode(self.headers.get(h, "")).decode("utf-8", "replace") if self.headers.get(h) else ""  # noqa: E731
+        try:
+            return self._send(200, _vpn.use_upload(q.get("name", ["vpn"])[0][:60], data, dec("X-VPN-User"), dec("X-VPN-Pass")))
+        except (ValueError, OSError) as e:
+            return self._send(400, {"error": str(e)})
+
     def kho_upload(self, url, length):
         """POST /api/kho/preview?name=&kind=: thân request là file CSV/XLSX (không multipart)."""
         if self.headers.get("X-BPI") != "1":
@@ -1372,6 +1402,19 @@ class Handler(BaseHTTPRequestHandler):
         if path in ("/kho", "/kho.html"):   # trang tự hiện màn hình đăng nhập (quản lý hoặc tài khoản khách)
             with open(os.path.join(HERE, "kho.html"), "rb") as f:
                 return self._send(200, f.read(), "text/html")
+        if path.startswith("/api/vpn/"):
+            if not self.is_admin():
+                return self.need_login()
+            if _vpn is None:
+                return self._send(503, {"error": "VPN chưa bật"})
+            try:
+                if path == "/api/vpn/status":
+                    return self._send(200, _vpn.status(q.get("check", [""])[0] == "1"))
+                if path == "/api/vpn/vpngate":
+                    return self._send(200, _vpn.vpngate_list())
+            except (OSError, ValueError) as e:
+                return self._send(502, {"error": str(e)})
+            return self._send(404, {"error": "not found"})
         if path.startswith("/api/kho/"):
             try:
                 if path == "/api/kho/whoami":
@@ -1473,6 +1516,8 @@ class Handler(BaseHTTPRequestHandler):
             return self.music_upload(url, length)
         if url.path == "/api/kho/preview":
             return self.kho_upload(url, length)
+        if url.path == "/api/vpn/upload":
+            return self.vpn_upload(url, length)
         if url.path.startswith(LUCI_PREFIXES):   # form của LuCI không có X-BPI; LuCI tự chống CSRF bằng token
             return self.proxy_luci(length)
         if length > 65536:
@@ -1502,6 +1547,14 @@ class Handler(BaseHTTPRequestHandler):
                                   headers={"Set-Cookie": self.cookie_header(token, SESSION_DAYS * 86400)})
             if not self.is_admin():
                 return self.need_login()
+            if url.path.startswith("/api/vpn/"):
+                if _vpn is None:
+                    raise OSError("VPN chưa bật")
+                if url.path == "/api/vpn/vpngate":
+                    return self._send(200, _vpn.use_vpngate(str(body.get("cc", "")), str(body.get("host", ""))))
+                if url.path == "/api/vpn/enable":
+                    return self._send(200, _vpn.set_enabled(bool(body.get("on"))))
+                return self._send(404, {"error": "not found"})
             if self.path == "/api/logout":
                 end_session(self.session_token())
                 return self._send(200, {"ok": True}, headers={"Set-Cookie": self.cookie_header("", 0)})
@@ -1551,7 +1604,7 @@ class Handler(BaseHTTPRequestHandler):
         # Bỏ log các lần trang tự cập nhật trạng thái để log dễ đọc.
         if any(p in (str(args[0]) if args else "") for p in ("/api/status", "/camera.jpg", "/api/traffic/recent", "/luci-static/",
                                                                    "GET /api/speaker", "GET /api/iot/devices",
-                                                                   "GET /api/kho/meta")):
+                                                                   "GET /api/kho/meta", "GET /api/vpn/status")):
             return
         super().log_message(fmt, *args)
 

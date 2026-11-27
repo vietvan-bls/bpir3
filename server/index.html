@@ -167,6 +167,7 @@
     <button data-tab="traffic" class="local-only">🌐 Truy cập</button>
     <button data-tab="device" class="local-only">💡 Điều khiển</button>
     <button data-tab="log" class="local-only">📜 Log</button>
+    <button data-tab="vpn" class="local-only">🌍 VPN</button>
     <button data-tab="system" class="local-only">⚙️ Hệ thống</button>
   </nav>
 
@@ -407,6 +408,47 @@
   </section>
 
   <!-- ================= Hệ thống ================= -->
+  <!-- ================= VPN cho mạng WiFi ================= -->
+  <section class="tab local-only" data-tab="vpn">
+    <div class="card section">
+      <div class="row" style="justify-content:space-between;margin-bottom:10px">
+        <h2 style="margin:0">VPN cho WiFi BPI-R3</h2>
+        <div class="row">
+          <button onclick="loadVpn(true)">↻ Kiểm tra IP</button>
+          <button class="primary" id="btnVpn" onclick="toggleVpn()">…</button>
+        </div>
+      </div>
+      <div class="wan" id="vpnNow">…</div>
+      <p class="note">Bật: mọi máy bắt WiFi BPI-R3 ra Internet qua VPN (Google, YouTube… thấy IP nước đó). Truy cập trong mạng, tới board,
+        Tailscale vẫn đi thẳng; riêng board (link công khai, MQTT, Tailscale) đi mạng thường. VPN rớt thì máy trong mạng mất Internet
+        (kill-switch) chứ không lộ IP thật; DNS cũng đi qua VPN, IPv6 bị chặn. Tắt khi cần vào trang Việt Nam (ngân hàng…).</p>
+      <pre id="vpnLog" style="display:none"></pre>
+    </div>
+    <div class="card section">
+      <h2>VPN Gate (miễn phí, không cần tài khoản)</h2>
+      <div class="row">
+        <select id="vgCountry" class="inp" style="flex:1 1 200px" onchange="showVgServers()"><option>Đang tải…</option></select>
+        <button onclick="loadVpnGate(true)">↻</button>
+      </div>
+      <div id="vgServers" class="nets"></div>
+      <p class="note">Máy chủ do tình nguyện viên chạy (đề án ĐH Tsukuba, Nhật): tốc độ thất thường, danh sách nước thay đổi liên tục,
+        <b>có ghi log</b> → hợp để đổi vị trí xem nội dung, không dùng cho việc cần riêng tư (ngân hàng, tài khoản quan trọng).</p>
+    </div>
+    <div class="card section">
+      <h2>Dùng VPN của bạn (file cấu hình)</h2>
+      <div class="row">
+        <input type="file" id="vpnFile" accept=".conf,.ovpn,.txt" class="inp" style="flex:2 1 220px">
+        <input id="vpnUser" class="inp" style="flex:1 1 120px" placeholder="user (nếu .ovpn cần)" autocomplete="off">
+        <input id="vpnPass" class="inp" style="flex:1 1 120px" type="password" placeholder="mật khẩu" autocomplete="new-password">
+        <button class="primary" onclick="uploadVpn()">Tải lên &amp; kết nối</button>
+      </div>
+      <p class="note"><b>Proton VPN Free</b> (miễn phí, vài nước): tạo tài khoản → account.protonvpn.com → <i>Downloads</i> →
+        <i>WireGuard configuration</i> → chọn <i>Router</i>, chọn máy chủ miễn phí → tải <code>.conf</code> → tải lên đây.
+        Cũng dùng được file WireGuard của Mullvad, Surfshark… hoặc file OpenVPN <code>.ovpn</code> (+ user/mật khẩu riêng cho router).
+        Khóa chỉ lưu trên board (<code>/etc/bpi-vpn</code>, quyền 600).</p>
+    </div>
+  </section>
+
   <section class="tab local-only" data-tab="system">
     <div class="card section">
       <h2>Mật khẩu truy cập từ xa</h2>
@@ -1134,7 +1176,61 @@ async function mUpload(files) {
 })();
 
 // ---------------- Tabs
+// ---------------- VPN
+let vpnSt = null, vgList = [];
+const flag = (cc) => cc ? String.fromCodePoint(...[...cc.toUpperCase()].map(c => 0x1F1A5 + c.charCodeAt(0))) : "🌍";
+async function loadVpn(check) {
+  try { vpnSt = await api("/api/vpn/status" + (check ? "?check=1" : "")); } catch (e) { $("vpnNow").textContent = "Lỗi: " + e.message; return; }
+  const s = vpnSt, ex = s.exit || {};
+  $("btnVpn").textContent = s.enabled ? "Tắt VPN" : "Bật VPN"; $("btnVpn").className = s.enabled ? "danger" : "primary";
+  $("btnVpn").disabled = !s.kind;
+  $("vpnNow").innerHTML = !s.kind ? `<span class="dot"></span><b>Chưa chọn VPN</b><span class="meta">chọn nước VPN Gate hoặc tải file cấu hình bên dưới</span>`
+    : !s.enabled ? `<span class="dot"></span><b>Đang tắt</b><span class="meta">${esc(s.name)}</span>`
+    : s.connected ? `<span class="dot ok"></span><b>${flag(ex.countryCode)} ${esc(ex.country || s.country || "Đã kết nối")}</b>
+        <span class="meta">IP ra Internet ${esc(ex.query || "?")}${ex.city ? " · " + esc(ex.city) : ""}${ex.isp ? " · " + esc(ex.isp) : ""} · ${esc(s.name)}
+        · ↓${fmtBytes(s.rx)} ↑${fmtBytes(s.tx)}</span>`
+    : `<span class="dot" style="background:var(--warn)"></span><b>Đang kết nối…</b><span class="meta">${esc(s.name)} · máy trong mạng tạm không ra Internet (kill-switch)</span>`;
+  $("vpnLog").style.display = s.enabled && !s.connected && s.log ? "" : "none"; $("vpnLog").textContent = s.log || "";
+}
+async function toggleVpn() {
+  const on = !vpnSt.enabled;
+  $("btnVpn").disabled = true;
+  try { await api("/api/vpn/enable", {on}); toast(on ? "Đang bật VPN…" : "Đã tắt VPN"); } catch (e) { toast("Lỗi: " + e.message); }
+  setTimeout(() => loadVpn(true), on ? 8000 : 500); setTimeout(() => loadVpn(true), 20000);
+}
+async function loadVpnGate(force) {
+  try { vgList = await api("/api/vpn/vpngate"); } catch (e) { $("vgCountry").innerHTML = `<option>Lỗi: ${esc(e.message)}</option>`; return; }
+  const cur = $("vgCountry").value;
+  $("vgCountry").innerHTML = vgList.map(c => `<option value="${c.cc}">${flag(c.cc)} ${esc(c.country)} (${c.count} máy chủ)</option>`).join("");
+  if (vgList.some(c => c.cc === cur)) $("vgCountry").value = cur;
+  showVgServers();
+}
+function showVgServers() {
+  const c = vgList.find(x => x.cc === $("vgCountry").value);
+  $("vgServers").innerHTML = c ? c.servers.map(s => `<button class="net" onclick="useVpnGate('${c.cc}', '${esc(s.host)}')">
+      <span class="name">${flag(c.cc)} ${esc(s.host)}</span><span class="meta">${s.ping} ms · ${s.mbps} Mbps · ${s.sessions} người dùng</span></button>`).join("")
+    + `<button class="primary" style="margin-top:6px" onclick="useVpnGate('${c.cc}', '')">Kết nối máy chủ tốt nhất ${flag(c.cc)} ${esc(c.country)}</button>` : "";
+}
+async function useVpnGate(cc, host) {
+  toast("Đang kết nối VPN Gate…");
+  try { await api("/api/vpn/vpngate", {cc, host}); } catch (e) { return toast("Lỗi: " + e.message); }
+  setTimeout(() => loadVpn(true), 8000); setTimeout(() => loadVpn(true), 20000); loadVpn();
+}
+async function uploadVpn() {
+  const f = $("vpnFile").files[0]; if (!f) return toast("Chọn file .conf / .ovpn");
+  const b64 = (v) => btoa(unescape(encodeURIComponent(v)));
+  const h = {"X-BPI": "1", "Content-Type": "application/octet-stream"};
+  if ($("vpnUser").value) { h["X-VPN-User"] = b64($("vpnUser").value); h["X-VPN-Pass"] = b64($("vpnPass").value); }
+  try {
+    const r = await fetch("/api/vpn/upload?name=" + encodeURIComponent(f.name), {method: "POST", headers: h, body: f});
+    const j = await r.json().catch(() => ({})); if (!r.ok) throw new Error(j.error || r.statusText);
+    toast("Đã tải lên, đang kết nối…"); $("vpnFile").value = ""; $("vpnPass").value = "";
+  } catch (e) { return toast("Lỗi: " + e.message); }
+  setTimeout(() => loadVpn(true), 8000); setTimeout(() => loadVpn(true), 20000); loadVpn();
+}
+
 const TAB_LOAD = {
+  vpn: () => { loadVpn(); loadVpnGate(); },
   music: () => loadMusic(),
   camera: () => camStart(),
   traffic: () => loadTraffic(),
