@@ -482,7 +482,8 @@ class Kho:
         for sup, sku in (("lcsc", lcsc), ("digikey", digikey), ("mouser", mouser)):
             sku = str(sku or "").strip()
             if sku:
-                r = self._q("SELECT part_id FROM part_suppliers WHERE supplier = ? AND sku = ? COLLATE NOCASE LIMIT 1",
+                r = self._q("SELECT s.part_id FROM part_suppliers s JOIN parts p ON p.id = s.part_id "
+                            "WHERE s.supplier = ? AND s.sku = ? COLLATE NOCASE LIMIT 1",
                             (sup, sku.upper() if sup == "lcsc" else sku))
                 if r:
                     return r[0]["part_id"], sup

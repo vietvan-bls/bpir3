@@ -176,6 +176,13 @@ class _KhoScreenState extends State<KhoScreen> {
             ),
             const SizedBox(width: 8),
             ActionChip(
+                avatar: const Icon(Icons.pin, size: 18),
+                label: const Text('Nhập mã LCSC'),
+                onPressed: () async {
+                  if (await addByLcscCode(context) != null) _reload();
+                }),
+            const SizedBox(width: 8),
+            ActionChip(
                 avatar: const Icon(Icons.add, size: 18),
                 label: const Text('Thêm tay'),
                 onPressed: () => _open(const PartEditScreen())),
@@ -525,6 +532,7 @@ class _PartEditScreenState extends State<PartEditScreen> {
     ('price', 'Đơn giá (USD)'),
     ('name', 'Mô tả'),
     ('datasheet', 'Datasheet (link)'),
+    ('image', 'Ảnh (link)'),
     ('notes', 'Ghi chú'),
   ];
   late final Map<String, TextEditingController> _c;
@@ -541,6 +549,34 @@ class _PartEditScreenState extends State<PartEditScreen> {
     ])) {
       _sups.add(('${s['supplier']}', TextEditingController(text: '${s['sku'] ?? ''}'),
           TextEditingController(text: '${s['url'] ?? ''}')));
+    }
+  }
+
+  /// Điền các ô còn trống từ thông tin LCSC.
+  Future<void> _fillLcsc(String raw) async {
+    var code = raw.trim().toUpperCase();
+    if (RegExp(r'^\d{2,10}$').hasMatch(code)) code = 'C$code';
+    if (!RegExp(r'^C\d{2,10}$').hasMatch(code)) return toast(context, 'Nhập mã LCSC dạng C25804 trước');
+    try {
+      final info = await ApiScope.read(context).get('/api/kho/lcsc?code=$code') as Map;
+      var n = 0;
+      setState(() {
+        for (final e in info.entries) {
+          final c = _c[e.key];
+          if (c != null && c.text.trim().isEmpty && e.value != null) {
+            c.text = '${e.value}';
+            n++;
+          }
+        }
+        for (var i = 0; i < _sups.length; i++) {
+          if (_sups[i].$1 == 'lcsc' && _sups[i].$2.text.trim().toUpperCase() != code && _sups[i].$2.text.trim() == raw.trim()) {
+            _sups[i].$2.text = code;
+          }
+        }
+      });
+      if (mounted) toast(context, n > 0 ? 'Đã điền $n ô từ LCSC: ${info['mpn'] ?? ''}' : 'Các ô đã có sẵn, không điền gì thêm');
+    } catch (e) {
+      if (mounted) toast(context, 'Lỗi: $e');
     }
   }
 
@@ -610,6 +646,11 @@ class _PartEditScreenState extends State<PartEditScreen> {
                       decoration: InputDecoration(
                           isDense: true, hintText: _sups[i].$1 == 'taobao' ? 'link Taobao' : 'mã (C25804, …-ND)')),
                 ),
+                if (_sups[i].$1 == 'lcsc')
+                  IconButton(
+                      icon: const Icon(Icons.cloud_download_outlined),
+                      tooltip: 'Lấy thông số từ LCSC',
+                      onPressed: () => _fillLcsc(_sups[i].$2.text)),
                 IconButton(icon: const Icon(Icons.close), onPressed: () => setState(() => _sups.removeAt(i))),
               ]),
             ),

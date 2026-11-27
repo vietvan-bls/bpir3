@@ -6,6 +6,50 @@ import '../main.dart';
 import '../util.dart';
 import 'kho.dart';
 
+/// Tra một mã (QR, C…, chữ) rồi hiện bảng nhập kho. Trả về tên linh kiện nếu đã nhập.
+Future<String?> showCodeResult(BuildContext context, String code) async {
+  final api = ApiScope.read(context);
+  final r = await api.post('/api/kho/scan', {'code': code}) as Map;
+  if (!context.mounted) return null;
+  return showModalBottomSheet<String>(
+    context: context,
+    isScrollControlled: true,
+    useSafeArea: true,
+    builder: (_) => ApiScope(api: api, child: _ScanResult(code: code, r: r)),
+  );
+}
+
+/// Hỏi mã LCSC (gõ C2040 hoặc chỉ 2040) -> tự ra thông số -> nhập số lượng.
+Future<String?> addByLcscCode(BuildContext context) async {
+  final c = TextEditingController();
+  final v = await showDialog<String>(
+    context: context,
+    builder: (d) => AlertDialog(
+      title: const Text('Nhập mã LCSC'),
+      content: TextField(
+        controller: c,
+        autofocus: true,
+        textCapitalization: TextCapitalization.characters,
+        decoration: const InputDecoration(hintText: 'C25804 hoặc 25804', helperText: 'Tự lấy thông số từ LCSC'),
+        onSubmitted: (t) => Navigator.pop(d, t),
+      ),
+      actions: [
+        TextButton(onPressed: () => Navigator.pop(d), child: const Text('Hủy')),
+        FilledButton(onPressed: () => Navigator.pop(d, c.text), child: const Text('Tra')),
+      ],
+    ),
+  );
+  var code = (v ?? '').trim().toUpperCase().replaceAll(' ', '');
+  if (code.isEmpty || !context.mounted) return null;
+  if (RegExp(r'^\d{2,10}$').hasMatch(code)) code = 'C$code';
+  try {
+    return await showCodeResult(context, code);
+  } catch (e) {
+    if (context.mounted) toast(context, 'Lỗi: $e');
+    return null;
+  }
+}
+
 /// Quét mã trên nhãn linh kiện (ưu tiên QR LCSC) để nhập kho liên tục.
 /// Server đọc mã (/api/kho/scan): QR LCSC {pc:C…,pm:…,qty:…}, DataMatrix Digi-Key, mã C…, hoặc chữ để tìm.
 class ScanScreen extends StatefulWidget {
@@ -59,14 +103,7 @@ class _ScanScreenState extends State<ScanScreen> {
   Future<void> _handle(String code) async {
     setState(() => _busy = true);
     try {
-      final r = await api.post('/api/kho/scan', {'code': code}) as Map;
-      if (!mounted) return;
-      final done = await showModalBottomSheet<String>(
-        context: context,
-        isScrollControlled: true,
-        useSafeArea: true,
-        builder: (_) => ApiScope(api: api, child: _ScanResult(code: code, r: r)),
-      );
+      final done = await showCodeResult(context, code);
       if (done != null && mounted) {
         setState(() {
           _count++;
@@ -157,6 +194,7 @@ class _ScanResultState extends State<_ScanResult> {
   @override
   void initState() {
     super.initState();
+    _qty.selection = TextSelection(baseOffset: 0, extentOffset: _qty.text.length);   // gõ số là thay luôn
     _qty.addListener(() => setState(() {}));
   }
 
@@ -187,6 +225,7 @@ class _ScanResultState extends State<_ScanResult> {
   Widget _fields({bool showLoc = true}) => Column(children: [
         TextField(
             controller: _qty,
+            autofocus: (lab['qty'] as num? ?? 0) == 0 && already == null,   // nhập mã tay: gõ số lượng ngay
             keyboardType: TextInputType.number,
             decoration: const InputDecoration(labelText: 'Số lượng nhập thêm', border: OutlineInputBorder(), isDense: true)),
         if (showLoc) ...[
