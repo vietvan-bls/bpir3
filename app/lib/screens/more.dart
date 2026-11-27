@@ -5,6 +5,7 @@ import 'package:material_ui/material_ui.dart';
 import '../main.dart';
 import '../util.dart';
 import 'network.dart';
+import 'vpn.dart';
 
 class MoreScreen extends StatelessWidget {
   const MoreScreen({super.key});
@@ -14,6 +15,8 @@ class MoreScreen extends StatelessWidget {
     void open(String title, Widget page) => Navigator.push(
         context, MaterialPageRoute(builder: (_) => Scaffold(appBar: AppBar(title: Text(title)), body: page)));
     return ListView(children: [
+      ListTile(leading: const Icon(Icons.vpn_lock), title: const Text('VPN cho WiFi'), subtitle: const Text('Đổi nước: VPN Gate miễn phí / file của bạn'),
+          onTap: () => open('VPN cho WiFi', const VpnScreen())),
       ListTile(leading: const Icon(Icons.wifi), title: const Text('Mạng'), subtitle: const Text('Wi-Fi Internet, LAN, máy đang kết nối'),
           onTap: () => open('Mạng', const NetworkScreen())),
       ListTile(leading: const Icon(Icons.public), title: const Text('Truy cập web'), subtitle: const Text('Máy nào vào trang nào'),

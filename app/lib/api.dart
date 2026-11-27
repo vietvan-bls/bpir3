@@ -296,10 +296,10 @@ class Api extends ChangeNotifier {
   }
 
   /// Tải lên dữ liệu thô (file CSV/XLSX…) tới [path], trả về JSON.
-  Future<dynamic> uploadBytes(String path, List<int> data) async {
+  Future<dynamic> uploadBytes(String path, List<int> data, {Map<String, String> headers = const {}}) async {
     final r = await _client
         .post(Uri.parse(url(path)),
-            headers: {..._headers(), 'Content-Type': 'application/octet-stream'}, body: data)
+            headers: {..._headers(), 'Content-Type': 'application/octet-stream', ...headers}, body: data)
         .timeout(const Duration(seconds: 60));
     return _check(r);
   }
