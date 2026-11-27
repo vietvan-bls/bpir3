@@ -338,6 +338,48 @@ Cài: [server/tailscale-funnel.sh](server/tailscale-funnel.sh) (lần đầu in 
   có sẵn ISRG Root X1/X2, LWT online/offline, nhận lệnh `iot/<tên>/set` bật tắt LED, gửi JSON mỗi 10 giây).
   Chép `secrets.example.h` thành `secrets.h` rồi điền Wi-Fi và tài khoản.
 
+## Debug STM32 từ xa (ST-Link cắm vào board)
+
+ST-Link cắm USB board → OpenOCD trên board làm GDB server → máy tính debug qua **Tailscale** (mạng riêng của bạn).
+
+```
+STM32 ──SWD── ST-Link ──USB── BPI-R3 (OpenOCD 127.0.0.1:3333) ══ tailscale serve (chỉ tailnet) ══ PC: IDE / GDB
+```
+
+- Đang dùng: ST-Link V2 (V2J46S7) + STM32F1 medium-density (64 KB flash, 20 KB RAM, Cortex-M3).
+- Cài: `apk add openocd stlink-st-info stlink-st-flash stlink-st-util`, cấu hình [server/openocd/stm32.cfg](server/openocd/stm32.cfg)
+  → `/etc/openocd/stm32.cfg`, dịch vụ [server/openocd.init](server/openocd.init) → `/etc/init.d/openocd-stm32`
+  (tự chạy khi khởi động, rút / cắm lại ST-Link thì tự kết nối lại sau ~5 giây).
+- Ra mạng: `tailscale serve --bg --tcp 3333 tcp://127.0.0.1:3333` (GDB) và `--tcp 4444` (telnet OpenOCD).
+  **Chỉ máy trong tailnet** vào được; không qua Funnel, không mở firewall (cổng GDB không có mật khẩu).
+- GDB ngắt kết nối (kể cả IDE tắt ngang) → chip tự chạy tiếp (`gdb-detach` → `resume`).
+- Đổi chip: sửa dòng `source [find target/stm32f1x.cfg]` (stm32f4x, stm32g0x, stm32h7x, stm32l4x…) rồi
+  `service openocd-stm32 restart`. Xem chip: `service openocd-stm32 stop; st-info --probe; service openocd-stm32 start`.
+
+**Máy tính**: cài Tailscale, đăng nhập cùng tài khoản → board là `100.121.201.107` (hoặc `bpi-r3`).
+Cần toolchain ARM (`arm-none-eabi-gdb` hoặc `gdb-multiarch`). Mỗi lúc một phiên GDB.
+
+```sh
+# dòng lệnh: nạp + chạy tới main
+arm-none-eabi-gdb build/app.elf -ex "target extended-remote 100.121.201.107:3333" \
+  -ex "monitor reset halt" -ex "load" -ex "break main" -ex "continue"
+```
+
+VS Code + Cortex-Debug (`.vscode/launch.json`):
+
+```json
+{ "type": "cortex-debug", "request": "launch", "name": "STM32 qua BPI-R3",
+  "servertype": "external", "gdbTarget": "100.121.201.107:3333",
+  "executable": "build/app.elf", "runToEntryPoint": "main",
+  "overrideLaunchCommands": ["monitor reset halt", "load", "monitor reset halt"] }
+```
+
+STM32CubeIDE: *Debug Configurations → STM32 C/C++ Application → tab Debugger*: Debug probe **ST-LINK (OpenOCD)**,
+bỏ chọn *Autostart local GDB server* / chọn **Connect to remote GDB server**, Host `100.121.201.107`, Port `3333`.
+Keil / CubeProgrammer cần ST-Link “thật” trên máy → dùng USB/IP (chưa cài).
+
+Telnet OpenOCD (`telnet 100.121.201.107 4444`): `reset halt`, `reset run`, `flash info 0`, `mdw 0x08000000 4`…
+
 ## Truy cập từ Internet (Cloudflare quick tunnel)
 
 Dịch vụ `cftunnel` ([server/cftunnel.init](server/cftunnel.init)) chạy `cloudflared` để đưa cổng 8080
