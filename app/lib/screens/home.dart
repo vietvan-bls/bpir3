@@ -2,9 +2,9 @@ import 'package:material_ui/material_ui.dart';
 
 import '../main.dart';
 import 'camera.dart';
+import 'kho.dart';
 import 'more.dart';
 import 'music.dart';
-import 'network.dart';
 import 'overview.dart';
 
 class HomeScreen extends StatefulWidget {
@@ -17,7 +17,7 @@ class HomeScreen extends StatefulWidget {
 class _HomeScreenState extends State<HomeScreen> {
   int _tab = 0;
 
-  static const _titles = ['Tổng quan', 'Camera', 'Mạng', 'Nhạc', 'Thêm'];
+  static const _titles = ['Tổng quan', 'Camera', 'Kho linh kiện', 'Nhạc', 'Thêm'];
 
   @override
   Widget build(BuildContext context) {
@@ -41,7 +41,7 @@ class _HomeScreenState extends State<HomeScreen> {
       body: switch (_tab) {
         0 => const OverviewScreen(),
         1 => const CameraScreen(),
-        2 => const NetworkScreen(),
+        2 => const KhoScreen(),
         3 => const MusicScreen(),
         _ => const MoreScreen(),
       },
@@ -51,7 +51,7 @@ class _HomeScreenState extends State<HomeScreen> {
         destinations: const [
           NavigationDestination(icon: Icon(Icons.dashboard_outlined), selectedIcon: Icon(Icons.dashboard), label: 'Tổng quan'),
           NavigationDestination(icon: Icon(Icons.videocam_outlined), selectedIcon: Icon(Icons.videocam), label: 'Camera'),
-          NavigationDestination(icon: Icon(Icons.wifi), label: 'Mạng'),
+          NavigationDestination(icon: Icon(Icons.inventory_2_outlined), selectedIcon: Icon(Icons.inventory_2), label: 'Kho'),
           NavigationDestination(icon: Icon(Icons.music_note_outlined), selectedIcon: Icon(Icons.music_note), label: 'Nhạc'),
           NavigationDestination(icon: Icon(Icons.more_horiz), label: 'Thêm'),
         ],

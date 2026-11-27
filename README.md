@@ -241,6 +241,26 @@ Mở `http://192.168.2.1:8080` từ mạng của board (hoặc qua link công kh
   nên ưu tiên bắt mạng 2.4 GHz.
 - Đèn LED, danh sách máy đang bắt Wi-Fi, log, tạo link công khai mới, khởi động lại server/board.
 
+## Kho linh kiện (`/kho`, [server/kho.py](server/kho.py), [server/kho.html](server/kho.html))
+
+Quản lý linh kiện mua từ LCSC, Digi-Key, Mouser, Taobao… Cần quyền quản trị (trong mạng, hoặc đã đăng nhập).
+Mở: `http://192.168.2.1:8080/kho` / `https://bpi-r3.tail24dd60.ts.net/kho`, hoặc tab **Kho** trong app Android.
+
+- **📦 Kho**: tìm theo MPN, giá trị, package, mã LCSC/Digi-Key/Mouser, vị trí; lọc theo loại / vị trí. Mỗi linh kiện có
+  số lượng, mức cảnh báo, vị trí, giá, datasheet, nhiều mã / link nhà cung cấp, lịch sử nhập–xuất. Nút ±1, ±10, kiểm kê.
+- **📋 BOM**: thả file BOM (CSV/XLSX từ KiCad, EasyEDA/JLCPCB, Altium…), tự nhận cột và khớp với kho theo
+  mã LCSC → Digi-Key → Mouser → MPN → giá trị + package. Nhập số bo → xem từng dòng **cần / có / thiếu**, số bo làm được
+  tối đa, tiền mua thêm; tải **CSV cần mua** (dạng LCSC: mã + số lượng, dán vào BOM Tool), **Lắp bo** để trừ kho.
+  Dòng sai thì chọn lại linh kiện, đánh dấu DNP; “Thêm dòng thiếu vào kho” tạo sẵn linh kiện SL 0 để theo dõi.
+- **📥 Nhập hàng**: thả file đơn hàng LCSC / Digi-Key / Mouser (CSV/XLSX) hoặc bảng tự làm (Taobao):
+  linh kiện đã có thì cộng số lượng + thêm mã nhà cung cấp (gộp đúng cùng 1 linh kiện mua ở nhiều nơi), chưa có thì tạo.
+  Chế độ “đặt đúng số lượng” dùng cho file kiểm kê. File `.xls` (Excel cũ) phải lưu lại thành `.xlsx` / `.csv`.
+- **⚠️ Sắp hết**: linh kiện có “Cảnh báo khi ≤” > 0 và số lượng ≤ mức đó; hiện số đếm ở đầu trang và trong app.
+- Dữ liệu: SQLite `/mnt/data/kho/kho.db`, tự sao lưu mỗi ngày vào `/mnt/data/kho/backup/` (giữ 14 bản).
+  Xuất toàn bộ kho ra CSV (mở bằng Excel): `/api/kho/export.csv`.
+- Chỉ dùng thư viện chuẩn của Python (đọc `.xlsx` bằng `zipfile` + XML), không cần cài thêm gói.
+- API: xem đầu [server/app.py](server/app.py) (`/api/kho/*`).
+
 ## MQTT broker (IoT)
 
 Mosquitto chạy trên board, cổng **1883**, chỉ vào được từ mạng của board (Wi-Fi `BPI-R3`, `192.168.2.x`);

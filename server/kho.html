@@ -1,0 +1,592 @@
+<!doctype html>
+<html lang="vi">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Kho linh kiện</title>
+<style>
+  :root {
+    --bg: #f4f5f7; --card: #fff; --text: #1d1f23; --muted: #6b7280; --line: #e5e7eb;
+    --accent: #7c3aed; --accent-text: #fff; --ok: #15803d; --warn: #b45309; --bad: #b91c1c;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #0f1115; --card: #1a1d23; --text: #e5e7eb; --muted: #9ca3af; --line: #2a2f38;
+      --accent: #a78bfa; --accent-text: #111; --ok: #22c55e; --warn: #f59e0b; --bad: #f87171;
+    }
+  }
+  * { box-sizing: border-box; }
+  body { font-family: system-ui, -apple-system, "Segoe UI", sans-serif; background: var(--bg); color: var(--text);
+         margin: 0; padding: 16px; }
+  main { max-width: 1100px; margin: 0 auto; }
+  header { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: 10px; }
+  h1 { font-size: 1.35rem; margin: 0; }
+  h2 { font-size: 1rem; margin: 0 0 10px; }
+  a { color: var(--accent); }
+  .badge { font-size: .75rem; padding: 3px 9px; border-radius: 999px; background: var(--line); color: var(--muted); white-space: nowrap; }
+  .badge.bad { background: color-mix(in srgb, var(--bad) 16%, transparent); color: var(--bad); }
+  .badge.ok { background: color-mix(in srgb, var(--ok) 16%, transparent); color: var(--ok); }
+  .badge.warn { background: color-mix(in srgb, var(--warn) 18%, transparent); color: var(--warn); }
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 14px; }
+  .section { margin-bottom: 12px; }
+  .row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+  .spacer { flex: 1; }
+  .label { font-size: .78rem; color: var(--muted); }
+  .note { font-size: .85rem; color: var(--muted); margin: 8px 0 0; }
+  button { font: inherit; font-size: .9rem; padding: 8px 14px; border-radius: 8px; border: 1px solid var(--line);
+           background: var(--card); color: var(--text); cursor: pointer; white-space: nowrap; }
+  button:hover:not(:disabled) { border-color: var(--accent); }
+  button.primary, button.active { background: var(--accent); color: var(--accent-text); border-color: var(--accent); }
+  button.danger { color: var(--bad); }
+  button.small { padding: 4px 10px; font-size: .8rem; }
+  button:disabled { opacity: .45; cursor: not-allowed; }
+  .inp, select.inp { font: inherit; font-size: .9rem; padding: 8px 10px; border-radius: 8px; border: 1px solid var(--line);
+         background: var(--bg); color: var(--text); min-width: 0; }
+  .grid2 { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 8px 10px; }
+  .grid2 label { display: flex; flex-direction: column; gap: 3px; font-size: .78rem; color: var(--muted); }
+  .stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: 10px; margin-bottom: 12px; }
+  .stat .v { font-size: 1.3rem; font-weight: 600; font-variant-numeric: tabular-nums; margin-top: 2px; }
+  .tabs { position: sticky; top: 0; z-index: 5; display: flex; gap: 4px; overflow-x: auto; background: var(--bg);
+          padding: 6px 0 10px; margin-bottom: 8px; border-bottom: 1px solid var(--line); }
+  .tabs button { flex: 0 0 auto; border: none; background: transparent; color: var(--muted); font-weight: 500; }
+  .tabs button.on { background: var(--card); color: var(--accent); box-shadow: 0 1px 3px rgba(0,0,0,.08); }
+  .tab { display: none; } .tab.on { display: block; }
+  table { width: 100%; border-collapse: collapse; font-size: .86rem; }
+  th, td { text-align: left; padding: 7px 6px; border-bottom: 1px solid var(--line); vertical-align: top; }
+  th { color: var(--muted); font-weight: 500; font-size: .76rem; white-space: nowrap; }
+  td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+  tr.click { cursor: pointer; } tr.click:hover td { background: var(--bg); }
+  .table-wrap { overflow-x: auto; }
+  .mpn { font-weight: 600; word-break: break-all; }
+  .sub { font-size: .76rem; color: var(--muted); }
+  .qty { font-weight: 600; font-size: 1rem; }
+  .qty.low { color: var(--bad); }
+  tr.st-ok td:first-child { box-shadow: inset 3px 0 var(--ok); }
+  tr.st-short td:first-child { box-shadow: inset 3px 0 var(--warn); }
+  tr.st-missing td:first-child { box-shadow: inset 3px 0 var(--bad); }
+  tr.st-dnp td { opacity: .5; }
+  .sup { display: inline-block; font-size: .7rem; padding: 1px 6px; border-radius: 4px; margin: 2px 3px 0 0;
+         background: var(--bg); border: 1px solid var(--line); color: var(--muted); text-decoration: none; }
+  .sup b { color: var(--text); font-weight: 600; }
+  .empty { text-align: center; padding: 28px 12px; color: var(--muted); }
+  dialog { border: 1px solid var(--line); border-radius: 14px; background: var(--card); color: var(--text);
+           padding: 18px; width: min(640px, calc(100% - 24px)); max-height: calc(100% - 24px); }
+  dialog::backdrop { background: rgba(0,0,0,.45); }
+  .qbtns button { min-width: 48px; }
+  #toast { position: fixed; left: 50%; bottom: 20px; transform: translateX(-50%); background: var(--text); color: var(--bg);
+           padding: 10px 16px; border-radius: 8px; font-size: .9rem; opacity: 0; transition: opacity .2s; pointer-events: none;
+           max-width: calc(100% - 32px); z-index: 100; }
+  #toast.show { opacity: 1; }
+  .drop { border: 2px dashed var(--line); border-radius: 12px; padding: 22px; text-align: center; color: var(--muted); }
+  .drop.over { border-color: var(--accent); color: var(--accent); }
+  .maptbl select { width: 100%; min-width: 110px; }
+  .maptbl td { white-space: nowrap; max-width: 220px; overflow: hidden; text-overflow: ellipsis; }
+  .show-m { display: none; }
+  @media (max-width: 640px) {
+    body { padding: 10px; }
+    .hide-m { display: none; }
+    .show-m { display: block; }
+    #bomLines td, #bomTable th { padding: 7px 4px; }
+  }
+</style>
+</head>
+<body>
+<main>
+  <header>
+    <h1>🧰 Kho linh kiện</h1>
+    <span id="hdrLow" class="badge bad" style="display:none;cursor:pointer" onclick="showTab('low')"></span>
+    <span class="spacer"></span>
+    <a href="/"><button class="small">← Trang chính</button></a>
+  </header>
+  <nav class="tabs" id="tabs">
+    <button data-tab="parts">📦 Kho</button>
+    <button data-tab="bom">📋 BOM</button>
+    <button data-tab="import">📥 Nhập hàng</button>
+    <button data-tab="low">⚠️ Sắp hết <span id="lowCnt"></span></button>
+  </nav>
+
+  <!-- ===================== Kho ===================== -->
+  <section class="tab" data-tab="parts">
+    <div class="stats" id="stats"></div>
+    <div class="row section">
+      <input id="q" class="inp" style="flex:3 1 220px" placeholder="🔍 Tìm MPN, giá trị, package, mã LCSC/Digi-Key/Mouser, vị trí…" autocomplete="off">
+      <select id="fCat" class="inp" style="flex:1 1 120px"><option value="">Mọi loại</option></select>
+      <select id="fLoc" class="inp" style="flex:1 1 120px"><option value="">Mọi vị trí</option></select>
+      <select id="fSort" class="inp" style="flex:1 1 120px">
+        <option value="updated">Mới sửa</option><option value="mpn">MPN</option><option value="category">Loại / giá trị</option>
+        <option value="location">Vị trí</option><option value="qty">Số lượng ít trước</option>
+      </select>
+      <button class="primary" onclick="editPart()">+ Thêm</button>
+    </div>
+    <div class="card table-wrap">
+      <table>
+        <thead><tr><th>Linh kiện</th><th class="hide-m">Loại · Package</th><th class="hide-m">Vị trí</th><th>Mua ở</th><th class="num">SL</th></tr></thead>
+        <tbody id="parts"></tbody>
+      </table>
+      <div class="row" style="margin-top:10px"><span class="label" id="pageInfo"></span><span class="spacer"></span>
+        <button class="small" id="btnMore" onclick="loadParts(true)">Xem thêm</button></div>
+    </div>
+    <p class="note"><a href="/api/kho/export.csv">⬇ Xuất toàn bộ kho ra CSV</a> (mở được bằng Excel) · Dữ liệu tự sao lưu mỗi ngày trên thẻ nhớ.</p>
+  </section>
+
+  <!-- ===================== BOM ===================== -->
+  <section class="tab" data-tab="bom">
+    <div id="bomList">
+      <div class="card section">
+        <h2>Thêm BOM</h2>
+        <div class="drop" id="bomDrop">Kéo thả file BOM vào đây, hoặc
+          <label style="color:var(--accent);cursor:pointer;text-decoration:underline">chọn file<input type="file" hidden accept=".csv,.tsv,.txt,.xlsx" onchange="pickFile(this.files[0], 'bom')"></label>
+          <div class="note">CSV / XLSX từ KiCad, EasyEDA / JLCPCB, Altium… Tự nhận cột Designator, Số lượng, MPN, Mã LCSC…</div></div>
+      </div>
+      <div class="card"><h2>Các BOM</h2><div class="table-wrap"><table>
+        <thead><tr><th>Tên</th><th class="num">Dòng</th><th class="num">Chưa khớp</th><th class="hide-m">Ngày</th><th></th></tr></thead>
+        <tbody id="boms"></tbody></table></div></div>
+    </div>
+    <div id="bomView" style="display:none">
+      <div class="card section">
+        <div class="row" style="margin-bottom:10px">
+          <button class="small" onclick="closeBom()">← Các BOM</button>
+          <h2 id="bomName" style="margin:0;flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis"></h2>
+          <button class="small" onclick="renameBom()">Đổi tên</button>
+          <button class="small danger" onclick="deleteBom()">Xóa</button>
+        </div>
+        <div class="row">
+          <label class="row" style="gap:6px">Số bo cần làm <input id="bomBoards" class="inp" type="number" min="1" value="1" style="width:90px"></label>
+          <span id="bomSum" class="row"></span>
+        </div>
+        <div class="row" style="margin-top:10px">
+          <button onclick="bomAct('rematch')" title="Khớp lại các dòng chưa khớp với kho">↻ Khớp lại</button>
+          <button onclick="bomAct('add-missing')" title="Tạo linh kiện (SL 0) cho dòng chưa có trong kho">+ Thêm dòng thiếu vào kho</button>
+          <a id="dlLcsc"><button>⬇ Cần mua (LCSC)</button></a>
+          <a id="dlAll"><button>⬇ Cần mua (đủ cột)</button></a>
+          <span class="spacer"></span>
+          <button class="primary" id="btnConsume" onclick="consumeBom()">🔧 Lắp bo: trừ kho</button>
+        </div>
+      </div>
+      <div class="card table-wrap">
+        <table id="bomTable">
+          <thead><tr><th>Designator</th><th class="hide-m">Trong BOM</th><th>Khớp với kho</th><th class="num">Cần</th><th class="num">Có</th><th class="num">Thiếu</th><th class="hide-m"></th></tr></thead>
+          <tbody id="bomLines"></tbody>
+        </table>
+      </div>
+      <p class="note">Xanh: đủ · Cam: thiếu · Đỏ: chưa có trong kho · Mờ: không lắp (DNP). Cùng một linh kiện dùng ở nhiều dòng thì tính chung.
+        Bấm vào một dòng để chọn lại linh kiện hoặc đánh dấu DNP.</p>
+    </div>
+  </section>
+
+  <!-- ===================== Nhập hàng ===================== -->
+  <section class="tab" data-tab="import">
+    <div class="card section">
+      <h2>Nhập đơn hàng / kiểm kê từ file</h2>
+      <div class="drop" id="impDrop">Kéo thả file vào đây, hoặc
+        <label style="color:var(--accent);cursor:pointer;text-decoration:underline">chọn file<input type="file" hidden accept=".csv,.tsv,.txt,.xlsx" onchange="pickFile(this.files[0], 'stock')"></label>
+        <div class="note">File đơn hàng xuất từ LCSC, Digi-Key, Mouser (CSV / XLSX), hoặc bảng tự làm (Taobao…) có cột Số lượng + MPN / mã.
+          Linh kiện đã có thì cộng số lượng và thêm mã nhà cung cấp; chưa có thì tạo mới.</div></div>
+    </div>
+    <div class="card">
+      <h2>Mẹo</h2>
+      <ul class="note" style="margin:0;padding-left:18px;line-height:1.6">
+        <li>LCSC: My Orders → chi tiết đơn → <b>Export</b> (CSV/XLSX).</li>
+        <li>Digi-Key: Order History → đơn → <b>Download CSV</b>.</li>
+        <li>Mouser: Order History → đơn → <b>Export to Excel</b> (nếu là .xls cũ, mở Excel lưu lại .xlsx).</li>
+        <li>Taobao: tự làm bảng Excel cột <code>MPN | Giá trị | Package | Số lượng | Link Taobao | Vị trí</code>.</li>
+      </ul>
+    </div>
+  </section>
+
+  <!-- ===================== Sắp hết ===================== -->
+  <section class="tab" data-tab="low">
+    <div class="card table-wrap">
+      <table>
+        <thead><tr><th>Linh kiện</th><th class="hide-m">Vị trí</th><th>Mua ở</th><th class="num">Còn</th><th class="num">Tối thiểu</th></tr></thead>
+        <tbody id="lowParts"></tbody>
+      </table>
+    </div>
+    <p class="note">Linh kiện có “Tối thiểu” &gt; 0 và số lượng ≤ mức đó. Đặt mức tối thiểu khi sửa linh kiện.</p>
+  </section>
+</main>
+
+<!-- chi tiết linh kiện -->
+<dialog id="dlgPart">
+  <div class="row" style="align-items:flex-start">
+    <div style="flex:1;min-width:0"><h2 id="dpTitle" style="margin:0 0 2px;word-break:break-all"></h2><div class="sub" id="dpSub"></div></div>
+    <button class="small" onclick="dlgPart.close()">✕</button>
+  </div>
+  <div class="row" style="margin:14px 0 6px">
+    <span class="qty" id="dpQty" style="font-size:1.8rem"></span><span class="label" id="dpMin"></span>
+  </div>
+  <div class="row qbtns">
+    <button onclick="quick(-10)">−10</button><button onclick="quick(-1)">−1</button>
+    <button onclick="quick(1)">+1</button><button onclick="quick(10)">+10</button>
+    <input id="dpDelta" class="inp" type="number" placeholder="±SL" style="width:90px">
+    <input id="dpReason" class="inp" placeholder="lý do (không bắt buộc)" style="flex:1 1 140px">
+    <button onclick="quick(+$('dpDelta').value)">Áp dụng</button>
+    <button onclick="setCount()">Kiểm kê…</button>
+  </div>
+  <div id="dpInfo" class="grid2" style="margin-top:14px"></div>
+  <div id="dpSups" style="margin-top:10px"></div>
+  <div id="dpBoms" class="note"></div>
+  <h2 style="margin-top:14px">Lịch sử</h2>
+  <div class="table-wrap" style="max-height:220px;overflow-y:auto"><table><tbody id="dpLog"></tbody></table></div>
+  <div class="row" style="margin-top:14px;justify-content:flex-end">
+    <button class="danger" onclick="deletePart()">Xóa</button><span class="spacer"></span>
+    <button class="primary" onclick="editPart(curPart)">✏️ Sửa</button>
+  </div>
+</dialog>
+
+<!-- thêm / sửa -->
+<dialog id="dlgEdit">
+  <form onsubmit="event.preventDefault(); savePart()">
+    <h2 id="deTitle">Thêm linh kiện</h2>
+    <div class="grid2">
+      <label>MPN<input id="eMpn" class="inp" autocomplete="off"></label>
+      <label>Hãng<input id="eMfr" class="inp" autocomplete="off"></label>
+      <label>Giá trị<input id="eValue" class="inp" placeholder="10k, 100nF…" autocomplete="off"></label>
+      <label>Package<input id="ePkg" class="inp" placeholder="0603, SOT-23…" autocomplete="off"></label>
+      <label>Loại<input id="eCat" class="inp" list="catList" placeholder="Điện trở, IC…" autocomplete="off"></label>
+      <label>Vị trí<input id="eLoc" class="inp" list="locList" placeholder="Hộp A / ngăn 3" autocomplete="off"></label>
+      <label>Số lượng<input id="eQty" class="inp" type="number"></label>
+      <label>Cảnh báo khi ≤<input id="eMin" class="inp" type="number" min="0" placeholder="0 = không cảnh báo"></label>
+      <label>Đơn giá (USD)<input id="ePrice" class="inp" type="number" step="any"></label>
+      <label>Datasheet (link)<input id="eDs" class="inp" type="url"></label>
+    </div>
+    <div class="grid2" style="margin-top:8px;grid-template-columns:1fr">
+      <label>Mô tả<input id="eName" class="inp"></label>
+      <label>Ghi chú<input id="eNotes" class="inp"></label>
+    </div>
+    <h2 style="margin-top:14px">Mã / link nhà cung cấp</h2>
+    <div id="eSups"></div>
+    <button type="button" class="small" onclick="addSupRow()">+ Thêm nơi mua</button>
+    <div class="row" style="margin-top:16px;justify-content:flex-end">
+      <button type="button" onclick="dlgEdit.close()">Hủy</button>
+      <button class="primary" type="submit">Lưu</button>
+    </div>
+  </form>
+</dialog>
+<datalist id="catList"></datalist><datalist id="locList"></datalist>
+
+<!-- xem trước file -->
+<dialog id="dlgMap" style="width:min(900px, calc(100% - 24px))">
+  <h2 id="dmTitle"></h2>
+  <p class="note" style="margin:0 0 10px" id="dmInfo"></p>
+  <div class="table-wrap maptbl"><table><thead id="dmHead"></thead><tbody id="dmBody"></tbody></table></div>
+  <div id="dmOpts" class="grid2" style="margin-top:12px"></div>
+  <div class="row" style="margin-top:16px;justify-content:flex-end">
+    <button onclick="dlgMap.close()">Hủy</button>
+    <button class="primary" id="dmOk" onclick="commitFile()">Nhập</button>
+  </div>
+</dialog>
+
+<!-- chọn linh kiện cho dòng BOM -->
+<dialog id="dlgPick">
+  <h2>Chọn linh kiện trong kho</h2>
+  <p class="note" id="pkInfo" style="margin:0 0 8px"></p>
+  <input id="pkQ" class="inp" style="width:100%" placeholder="🔍 Tìm…" autocomplete="off">
+  <div style="max-height:50vh;overflow-y:auto;margin-top:8px"><table><tbody id="pkList"></tbody></table></div>
+  <div class="row" style="margin-top:12px;justify-content:flex-end">
+    <button class="danger" onclick="pickPart(0)">Bỏ khớp</button>
+    <button id="pkDnp" onclick="toggleDnp(pickLine.id, pickLine.dnp ? 0 : 1); dlgPick.close()"></button><span class="spacer"></span>
+    <button onclick="dlgPick.close()">Đóng</button>
+  </div>
+</dialog>
+<div id="toast"></div>
+
+<script>
+const $ = (id) => document.getElementById(id);
+const dlgPart = $("dlgPart"), dlgEdit = $("dlgEdit"), dlgMap = $("dlgMap"), dlgPick = $("dlgPick");
+const SUP = {lcsc: "LCSC", digikey: "Digi-Key", mouser: "Mouser", taobao: "Taobao", other: "Khác"};
+function esc(s) { return String(s ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c])); }
+function toast(m) { const t = $("toast"); t.textContent = m; t.classList.add("show"); clearTimeout(t._h); t._h = setTimeout(() => t.classList.remove("show"), 3200); }
+async function api(path, body) {
+  const opt = body === undefined ? {} : {method: "POST", headers: {"Content-Type": "application/json", "X-BPI": "1"}, body: JSON.stringify(body)};
+  const r = await fetch(path, opt);
+  const j = await r.json().catch(() => ({}));
+  if (r.status === 401) { location.href = "/"; throw new Error("Cần đăng nhập"); }
+  if (!r.ok) throw new Error(j.error || r.statusText);
+  return j;
+}
+function supUrl(s) {
+  if (s.url) return s.url;
+  const k = encodeURIComponent(s.sku);
+  return {lcsc: `https://www.lcsc.com/product-detail/${k}.html`, digikey: `https://www.digikey.com/en/products/result?keywords=${k}`,
+          mouser: `https://www.mouser.com/c/?q=${k}`}[s.supplier] || "";
+}
+function supTags(list) {
+  return (list || []).map(s => { const u = supUrl(s);
+    return `<a class="sup" ${u ? `href="${esc(u)}" target="_blank" rel="noopener"` : ""} onclick="event.stopPropagation()">${SUP[s.supplier] || s.supplier}${s.sku ? " <b>" + esc(s.sku) + "</b>" : ""}</a>`; }).join("");
+}
+function partTitle(p) { return p.mpn || p.value || p.name || "(không tên)"; }
+function partSub(p) { return [p.mpn && p.value ? p.value : "", p.manufacturer, p.name].filter(Boolean).join(" · "); }
+const fmtT = (t) => new Date(t * 1000).toLocaleString("vi-VN", {hour12: false, day: "2-digit", month: "2-digit", year: "2-digit", hour: "2-digit", minute: "2-digit"});
+
+// ------------------------------------------------ meta / thống kê
+let meta = {};
+async function loadMeta() {
+  try { meta = await api("/api/kho/meta"); } catch { return; }
+  $("stats").innerHTML = [["Loại linh kiện", meta.n], ["Tổng số con", meta.pcs.toLocaleString("vi-VN")],
+    ["Giá trị (USD)", meta.value.toFixed(2)], ["Sắp hết", meta.low], ["Hết hàng", meta.out], ["BOM", meta.boms]]
+    .map(([l, v]) => `<div class="card stat"><div class="label">${l}</div><div class="v">${v}</div></div>`).join("");
+  $("lowCnt").textContent = meta.low ? `(${meta.low})` : "";
+  $("hdrLow").style.display = meta.low ? "" : "none"; $("hdrLow").textContent = `⚠️ ${meta.low} loại sắp hết`;
+  const fill = (sel, items, first) => { const cur = $(sel).value;
+    $(sel).innerHTML = `<option value="">${first}</option>` + items.map(x => `<option>${esc(x)}</option>`).join(""); $(sel).value = cur; };
+  fill("fCat", meta.categories, "Mọi loại"); fill("fLoc", meta.locations, "Mọi vị trí");
+  $("catList").innerHTML = meta.categories.map(x => `<option value="${esc(x)}">`).join("");
+  $("locList").innerHTML = meta.locations.map(x => `<option value="${esc(x)}">`).join("");
+}
+
+// ------------------------------------------------ danh sách
+let parts = [], total = 0, qTimer = null;
+function partRow(p, extra) {
+  return `<tr class="click" onclick="openPart(${p.id})">
+    <td><div class="mpn">${esc(partTitle(p))}</div><div class="sub">${esc(partSub(p))}</div></td>
+    ${extra === "low" ? "" : `<td class="hide-m">${esc(p.category)}${p.category && p.package ? " · " : ""}${esc(p.package)}</td>`}
+    <td class="hide-m">${esc(p.location)}</td><td>${supTags(p.suppliers)}</td>
+    <td class="num"><span class="qty ${p.low || p.qty <= 0 ? "low" : ""}">${p.qty.toLocaleString("vi-VN")}</span>${extra === "low" ? "" : p.low ? '<div class="sub">sắp hết</div>' : ""}</td>
+    ${extra === "low" ? `<td class="num">${p.min_qty}</td>` : ""}</tr>`;
+}
+async function loadParts(more) {
+  const q = new URLSearchParams({q: $("q").value.trim(), category: $("fCat").value, location: $("fLoc").value,
+                                 sort: $("fSort").value, limit: 100, offset: more ? parts.length : 0});
+  let r; try { r = await api("/api/kho/parts?" + q); } catch (e) { toast("Lỗi: " + e.message); return; }
+  parts = more ? parts.concat(r.items) : r.items; total = r.total;
+  $("parts").innerHTML = parts.length ? parts.map(p => partRow(p)).join("")
+    : `<tr><td colspan="5" class="empty">${$("q").value ? "Không tìm thấy." : "Kho trống. Bấm “+ Thêm” hoặc vào tab 📥 Nhập hàng để nhập file đơn hàng."}</td></tr>`;
+  $("pageInfo").textContent = total ? `${parts.length} / ${total} loại` : "";
+  $("btnMore").style.display = parts.length < total ? "" : "none";
+}
+$("q").addEventListener("input", () => { clearTimeout(qTimer); qTimer = setTimeout(() => loadParts(), 250); });
+["fCat", "fLoc", "fSort"].forEach(id => $(id).addEventListener("change", () => loadParts()));
+async function loadLow() {
+  try { const r = await api("/api/kho/parts?low=1&sort=qty&limit=500");
+    $("lowParts").innerHTML = r.items.length ? r.items.map(p => partRow(p, "low")).join("") : '<tr><td colspan="5" class="empty">Không có linh kiện nào sắp hết 👍</td></tr>';
+  } catch (e) { toast("Lỗi: " + e.message); }
+}
+function refreshAll() { loadMeta(); loadParts(); if (curTab === "low") loadLow(); if (curBom) openBom(curBom.id); }
+
+// ------------------------------------------------ chi tiết
+let curPart = null;
+async function openPart(id) {
+  try { curPart = await api("/api/kho/part?id=" + id); } catch (e) { return toast("Lỗi: " + e.message); }
+  renderPart(); if (!dlgPart.open) dlgPart.showModal();
+}
+function renderPart() {
+  const p = curPart;
+  $("dpTitle").textContent = partTitle(p); $("dpSub").textContent = partSub(p);
+  $("dpQty").textContent = p.qty.toLocaleString("vi-VN") + " con"; $("dpQty").className = "qty" + (p.low || p.qty <= 0 ? " low" : "");
+  $("dpMin").textContent = p.min_qty ? `cảnh báo khi ≤ ${p.min_qty}` + (p.low ? " · ⚠️ sắp hết" : "") : "chưa đặt mức cảnh báo";
+  const info = [["Loại", p.category], ["Package", p.package], ["Giá trị", p.value], ["Vị trí", p.location], ["Hãng", p.manufacturer],
+                ["Đơn giá", p.price != null ? p.price + " " + (p.currency || "USD") : ""], ["Ghi chú", p.notes]];
+  $("dpInfo").innerHTML = info.filter(x => x[1]).map(([l, v]) => `<div><div class="label">${l}</div>${esc(v)}</div>`).join("")
+    + (p.datasheet ? `<div><div class="label">Datasheet</div><a href="${esc(p.datasheet)}" target="_blank" rel="noopener">mở</a></div>` : "");
+  $("dpSups").innerHTML = p.suppliers.length ? '<div class="label">Mua ở</div>' + supTags(p.suppliers) : "";
+  $("dpBoms").innerHTML = p.boms.length ? "Dùng trong BOM: " + p.boms.map(b => `<a href="#" onclick="dlgPart.close();showTab('bom');openBom(${b.id});return false">${esc(b.name)}</a> (${b.qty}/bo)`).join(", ") : "";
+  $("dpLog").innerHTML = p.log.length ? p.log.map(l => `<tr><td class="sub" style="white-space:nowrap">${fmtT(l.ts)}</td>
+    <td class="num" style="color:${l.delta > 0 ? "var(--ok)" : "var(--bad)"}">${l.delta > 0 ? "+" : ""}${l.delta}</td>
+    <td class="num">${l.qty_after}</td><td>${esc(l.reason)}</td></tr>`).join("") : '<tr><td class="sub">Chưa có</td></tr>';
+}
+async function quick(delta) {
+  if (!delta) return;
+  try { curPart = await api("/api/kho/stock", {id: curPart.id, delta, reason: $("dpReason").value.trim()});
+        $("dpDelta").value = ""; renderPart(); refreshAll(); toast((delta > 0 ? "+" : "") + delta + " → còn " + curPart.qty); }
+  catch (e) { toast("Lỗi: " + e.message); }
+}
+async function setCount() {
+  const v = prompt("Kiểm kê: số lượng thực tế đếm được", curPart.qty);
+  if (v === null || v.trim() === "" || isNaN(+v)) return;
+  try { curPart = await api("/api/kho/stock", {id: curPart.id, set: +v, reason: $("dpReason").value.trim() || "Kiểm kê"}); renderPart(); refreshAll(); }
+  catch (e) { toast("Lỗi: " + e.message); }
+}
+async function deletePart() {
+  if (!confirm(`Xóa “${partTitle(curPart)}” khỏi kho? Lịch sử của nó cũng bị xóa.`)) return;
+  try { await api("/api/kho/part/delete", {id: curPart.id}); dlgPart.close(); refreshAll(); toast("Đã xóa"); }
+  catch (e) { toast("Lỗi: " + e.message); }
+}
+
+// ------------------------------------------------ thêm / sửa
+let editing = null;
+const EF = {eMpn: "mpn", eMfr: "manufacturer", eValue: "value", ePkg: "package", eCat: "category", eLoc: "location",
+            eQty: "qty", eMin: "min_qty", ePrice: "price", eDs: "datasheet", eName: "name", eNotes: "notes"};
+function supRowHtml(s = {supplier: "lcsc"}) {
+  return `<div class="row sup-row" style="margin-bottom:6px">
+    <select class="inp" style="flex:0 0 110px">${Object.entries(SUP).map(([k, v]) => `<option value="${k}" ${k === s.supplier ? "selected" : ""}>${v}</option>`).join("")}</select>
+    <input class="inp" style="flex:1 1 120px" placeholder="mã (C25804, 296-…-ND)" value="${esc(s.sku || "")}">
+    <input class="inp" style="flex:2 1 160px" placeholder="link (Taobao…)" value="${esc(s.url || "")}">
+    <button type="button" class="small danger" onclick="this.parentNode.remove()">✕</button></div>`;
+}
+function addSupRow(s) { $("eSups").insertAdjacentHTML("beforeend", supRowHtml(s)); }
+function editPart(p) {
+  editing = p || null;
+  $("deTitle").textContent = p ? "Sửa " + partTitle(p) : "Thêm linh kiện";
+  for (const [id, f] of Object.entries(EF)) $(id).value = p ? (p[f] ?? "") : (f === "qty" ? 0 : f === "min_qty" ? "" : "");
+  $("eSups").innerHTML = ""; (p ? p.suppliers : [{supplier: "lcsc"}]).forEach(addSupRow);
+  if (dlgPart.open) dlgPart.close();
+  dlgEdit.showModal(); $("eMpn").focus();
+}
+async function savePart() {
+  const d = {}; for (const [id, f] of Object.entries(EF)) d[f] = $(id).value;
+  if (d.min_qty === "") d.min_qty = 0; if (d.price === "") d.price = null;
+  d.suppliers = [...document.querySelectorAll("#eSups .sup-row")].map(r => { const [s, sku, url] = r.querySelectorAll("select,input");
+    return {supplier: s.value, sku: sku.value.trim(), url: url.value.trim()}; }).filter(s => s.sku || s.url);
+  if (editing) d.id = editing.id;
+  try { const p = await api("/api/kho/part", d); dlgEdit.close(); toast("Đã lưu"); refreshAll(); openPart(p.id); }
+  catch (e) { toast("Lỗi: " + e.message); }
+}
+
+// ------------------------------------------------ đọc file (BOM / nhập hàng)
+let preview = null, previewKind = "stock";
+async function pickFile(file, kind) {
+  if (!file) return;
+  previewKind = kind;
+  try {
+    const r = await fetch(`/api/kho/preview?name=${encodeURIComponent(file.name)}&kind=${kind}`,
+      {method: "POST", headers: {"X-BPI": "1", "Content-Type": "application/octet-stream"}, body: file});
+    const j = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(j.error || r.statusText);
+    preview = j; showMap();
+  } catch (e) { toast("Lỗi đọc file: " + e.message); }
+  document.querySelectorAll('input[type=file]').forEach(i => i.value = "");
+}
+function setupDrop(id, kind) {
+  const d = $(id);
+  d.addEventListener("dragover", e => { e.preventDefault(); d.classList.add("over"); });
+  d.addEventListener("dragleave", () => d.classList.remove("over"));
+  d.addEventListener("drop", e => { e.preventDefault(); d.classList.remove("over"); pickFile(e.dataTransfer.files[0], kind); });
+}
+setupDrop("bomDrop", "bom"); setupDrop("impDrop", "stock");
+function showMap() {
+  const p = preview, inv = {}; for (const [f, i] of Object.entries(p.mapping)) inv[i] = f;
+  $("dmTitle").textContent = (previewKind === "bom" ? "Thêm BOM: " : "Nhập hàng: ") + p.name;
+  $("dmInfo").textContent = `${p.rows} dòng. Kiểm tra cột nào là gì (đã tự đoán), sửa nếu sai.`;
+  const opts = (i) => `<option value="">— bỏ qua —</option>` + Object.entries(p.fields).map(([f, l]) => `<option value="${f}" ${inv[i] === f ? "selected" : ""}>${l}</option>`).join("");
+  $("dmHead").innerHTML = `<tr>${p.headers.map((h, i) => `<th><div>${esc(h)}</div><select class="inp" data-col="${i}">${opts(i)}</select></th>`).join("")}</tr>`;
+  $("dmBody").innerHTML = p.sample_raw.map(r => `<tr>${p.headers.map((_, i) => `<td class="sub">${esc(r[i] ?? "")}</td>`).join("")}</tr>`).join("");
+  $("dmOpts").innerHTML = previewKind === "bom"
+    ? `<label class="label">Tên BOM<input id="mName" class="inp" value="${esc(p.name.replace(/\.[^.]+$/, ""))}"></label>
+       <label class="label">Số bo<input id="mBoards" class="inp" type="number" min="1" value="1"></label>`
+    : `<label class="label">Cách nhập<select id="mMode" class="inp"><option value="add">Cộng thêm (đơn hàng mới về)</option>
+         <option value="set">Đặt đúng số lượng (file kiểm kê)</option></select></label>
+       <label class="label">Vị trí cho linh kiện mới<input id="mLoc" class="inp" list="locList" placeholder="không bắt buộc"></label>
+       <label class="label">Loại cho linh kiện mới<input id="mCat" class="inp" list="catList" placeholder="không bắt buộc"></label>
+       <label class="label">Ghi chú lịch sử<input id="mRef" class="inp" placeholder="vd mã đơn LCSC"></label>`;
+  $("dmOk").textContent = previewKind === "bom" ? "Tạo BOM" : "Nhập vào kho";
+  dlgMap.showModal();
+}
+async function commitFile() {
+  const mapping = {};
+  document.querySelectorAll("#dmHead select").forEach(s => { if (s.value) mapping[s.value] = +s.dataset.col; });
+  $("dmOk").disabled = true;
+  try {
+    if (previewKind === "bom") {
+      const b = await api("/api/kho/bom/create", {token: preview.token, mapping, name: $("mName").value, boards: +$("mBoards").value || 1});
+      dlgMap.close(); toast("Đã tạo BOM"); loadMeta(); showTab("bom"); openBom(b.id);
+    } else {
+      const r = await api("/api/kho/import", {token: preview.token, mapping, mode: $("mMode").value, location: $("mLoc").value,
+                                              category: $("mCat").value, ref: $("mRef").value});
+      dlgMap.close(); toast(`Xong: ${r.created} mới, ${r.updated} cập nhật${r.skipped ? ", bỏ qua " + r.skipped : ""}`);
+      showTab("parts"); refreshAll();
+    }
+  } catch (e) { toast("Lỗi: " + e.message); }
+  finally { $("dmOk").disabled = false; }
+}
+
+// ------------------------------------------------ BOM
+let curBom = null;
+async function loadBoms() {
+  try { const r = await api("/api/kho/boms");
+    $("boms").innerHTML = r.length ? r.map(b => `<tr class="click" onclick="openBom(${b.id})"><td class="mpn">${esc(b.name)}</td>
+      <td class="num">${b.lines}</td><td class="num">${b.unmatched ? `<span class="badge bad">${b.unmatched}</span>` : "0"}</td>
+      <td class="hide-m sub">${fmtT(b.created)}</td><td class="num">›</td></tr>`).join("") : '<tr><td colspan="5" class="empty">Chưa có BOM nào.</td></tr>';
+  } catch (e) { toast("Lỗi: " + e.message); }
+}
+async function openBom(id, boards) {
+  try { curBom = await api(`/api/kho/bom?id=${id}` + (boards ? `&boards=${boards}` : "")); } catch (e) { return toast("Lỗi: " + e.message); }
+  $("bomList").style.display = "none"; $("bomView").style.display = "";
+  renderBom();
+}
+function renderBom() {
+  const b = curBom, s = b.summary, n = b.boards_view;
+  $("bomName").textContent = b.name;
+  if (document.activeElement !== $("bomBoards")) $("bomBoards").value = n;
+  $("bomSum").innerHTML = `<span class="badge ok">${s.ok} đủ</span>` + (s.short ? `<span class="badge warn">${s.short} thiếu</span>` : "")
+    + (s.missing ? `<span class="badge bad">${s.missing} chưa có trong kho</span>` : "") + (s.dnp ? `<span class="badge">${s.dnp} DNP</span>` : "")
+    + (!s.missing ? `<span class="badge">làm được tối đa ${s.buildable} bo</span>` : "")
+    + (s.cost_short ? `<span class="badge">mua thêm ≈ ${s.cost_short} USD</span>` : "");
+  $("dlLcsc").href = `/api/kho/bom/shortage.csv?id=${b.id}&boards=${n}&supplier=lcsc`;
+  $("dlAll").href = `/api/kho/bom/shortage.csv?id=${b.id}&boards=${n}&supplier=all`;
+  $("btnConsume").disabled = !!(s.short || s.missing);
+  $("bomLines").innerHTML = b.lines.map(l => {
+    const bomTxt = [l.mpn, l.value && l.value !== l.mpn ? l.value : "", l.package].filter(Boolean).join(" · ") || l.name;
+    const codes = [l.lcsc && "LCSC " + l.lcsc, l.digikey && "DK " + l.digikey, l.mouser && "MS " + l.mouser].filter(Boolean).join(" · ");
+    const match = l.part_id ? `<a href="#" onclick="event.stopPropagation();openPart(${l.part_id});return false" class="mpn">${esc(l.p_mpn || l.p_value || l.p_name)}</a>
+        <div class="sub">${esc([l.p_location, l.match && "khớp theo " + l.match].filter(Boolean).join(" · "))}</div>`
+      : '<span class="badge bad">chưa có</span>';
+    return `<tr class="st-${l.status} click" onclick="openPick(${l.id})"><td style="max-width:160px;word-break:break-word">${esc(l.designator) || "—"}<div class="sub">${l.qty}/bo</div>
+        <div class="sub show-m">${esc(bomTxt)}</div></td>
+      <td class="hide-m">${esc(bomTxt)}<div class="sub">${esc(codes)}</div></td><td>${match}</td>
+      <td class="num">${l.need}</td><td class="num">${l.have ?? "—"}</td>
+      <td class="num">${l.short ? `<b style="color:var(--bad)">${l.short}</b>` : ""}</td>
+      <td class="num hide-m"><button class="small" onclick="event.stopPropagation();openPick(${l.id})" title="Chọn linh kiện khác trong kho">Chọn</button>
+        <button class="small" onclick="event.stopPropagation();toggleDnp(${l.id}, ${l.dnp ? 0 : 1})" title="Không lắp / lắp">${l.dnp ? "Lắp" : "DNP"}</button></td></tr>`;
+  }).join("");
+}
+$("bomBoards").addEventListener("change", () => { const n = Math.max(1, +$("bomBoards").value || 1); openBom(curBom.id, n); api("/api/kho/bom/update", {id: curBom.id, boards: n}).catch(() => {}); });
+function closeBom() { curBom = null; $("bomView").style.display = "none"; $("bomList").style.display = ""; loadBoms(); }
+async function bomAct(act) {
+  try { const r = await api(`/api/kho/bom/${act}`, {id: curBom.id}); const n = +$("bomBoards").value;
+        await openBom(curBom.id, n); toast(act === "add-missing" ? `Đã thêm ${r.added} linh kiện vào kho (SL 0)` : "Đã khớp lại"); loadMeta(); }
+  catch (e) { toast("Lỗi: " + e.message); }
+}
+async function consumeBom() {
+  const n = +$("bomBoards").value || 1;
+  if (!confirm(`Trừ kho linh kiện cho ${n} bo “${curBom.name}”? (ghi vào lịch sử từng linh kiện)`)) return;
+  try { curBom = await api("/api/kho/bom/consume", {id: curBom.id, boards: n}); await openBom(curBom.id, n); toast(`Đã trừ kho cho ${n} bo`); refreshAll(); }
+  catch (e) { toast("Lỗi: " + e.message); }
+}
+async function renameBom() {
+  const v = prompt("Tên BOM", curBom.name); if (!v) return;
+  try { await api("/api/kho/bom/update", {id: curBom.id, name: v}); openBom(curBom.id, +$("bomBoards").value); } catch (e) { toast("Lỗi: " + e.message); }
+}
+async function deleteBom() {
+  if (!confirm(`Xóa BOM “${curBom.name}”? (không ảnh hưởng số lượng trong kho)`)) return;
+  try { await api("/api/kho/bom/delete", {id: curBom.id}); closeBom(); loadMeta(); } catch (e) { toast("Lỗi: " + e.message); }
+}
+async function toggleDnp(lineId, dnp) {
+  try { await api("/api/kho/bom/line", {line_id: lineId, dnp}); openBom(curBom.id, +$("bomBoards").value); } catch (e) { toast("Lỗi: " + e.message); }
+}
+let pickLine = null, pkTimer = null;
+function openPick(lineId) {
+  pickLine = curBom.lines.find(l => l.id === lineId);
+  $("pkInfo").textContent = `Dòng ${pickLine.designator || pickLine.line}: ${[pickLine.mpn, pickLine.value, pickLine.package].filter(Boolean).join(" · ")}`;
+  $("pkDnp").textContent = pickLine.dnp ? "Lắp lại dòng này" : "Không lắp (DNP)";
+  $("pkQ").value = pickLine.mpn || pickLine.value || ""; dlgPick.showModal(); searchPick();
+}
+async function searchPick() {
+  try { const r = await api("/api/kho/parts?limit=40&q=" + encodeURIComponent($("pkQ").value.trim()));
+    $("pkList").innerHTML = r.items.length ? r.items.map(p => `<tr class="click" onclick="pickPart(${p.id})"><td><div class="mpn">${esc(partTitle(p))}</div>
+      <div class="sub">${esc([p.package, p.location, partSub(p)].filter(Boolean).join(" · "))}</div></td><td class="num qty">${p.qty}</td></tr>`).join("")
+      : '<tr><td class="empty">Không tìm thấy. Thêm linh kiện ở tab 📦 Kho trước.</td></tr>';
+  } catch (e) { toast("Lỗi: " + e.message); }
+}
+$("pkQ").addEventListener("input", () => { clearTimeout(pkTimer); pkTimer = setTimeout(searchPick, 250); });
+async function pickPart(pid) {
+  try { await api("/api/kho/bom/line", {line_id: pickLine.id, part_id: pid}); dlgPick.close(); openBom(curBom.id, +$("bomBoards").value); }
+  catch (e) { toast("Lỗi: " + e.message); }
+}
+
+// ------------------------------------------------ tabs
+let curTab = "parts";
+function showTab(name) {
+  if (!["parts", "bom", "import", "low"].includes(name)) name = "parts";
+  curTab = name;
+  document.querySelectorAll("#tabs button").forEach(b => b.classList.toggle("on", b.dataset.tab === name));
+  document.querySelectorAll("section.tab").forEach(s => s.classList.toggle("on", s.dataset.tab === name));
+  history.replaceState(null, "", name === "parts" ? location.pathname : "#" + name);
+  if (name === "bom" && !curBom) loadBoms();
+  if (name === "low") loadLow();
+}
+document.querySelectorAll("#tabs button").forEach(b => b.addEventListener("click", () => showTab(b.dataset.tab)));
+showTab(location.hash.slice(1)); loadMeta(); loadParts();
+</script>
+</body>
+</html>

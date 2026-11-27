@@ -56,6 +56,22 @@ IoT (iot.py, trang /iot): mật khẩu riêng, khác mật khẩu quản trị. 
   GET  /api/iot/accounts         tài khoản MQTT của thiết bị (mỗi tài khoản <tên> chỉ dùng iot/<tên>/#)
   POST /api/iot/accounts {"action": "create"|"reset"|"delete", "name", "note"?}  tạo / đổi mật khẩu / xóa
 
+Kho linh kiện (kho.py, trang /kho), cần quyền quản trị:
+  GET  /api/kho/meta                         tổng số, sắp hết, danh sách loại / vị trí
+  GET  /api/kho/parts?q=&category=&location=&low=1&sort=&limit=&offset=
+  GET  /api/kho/part?id=                     chi tiết + mã nhà cung cấp + lịch sử + BOM dùng nó
+  POST /api/kho/part {id?, mpn, name, qty, min_qty, ..., suppliers: [{supplier, sku, url, price}]}
+  POST /api/kho/part/delete {id}
+  POST /api/kho/stock {id, delta | set, reason?, ref?}       nhập / xuất / kiểm kê
+  POST /api/kho/preview?name=<file>&kind=bom|stock   thân = nội dung file CSV/XLSX -> {token, headers, mapping}
+  POST /api/kho/import {token, mapping, mode: add|set, supplier?, location?, category?}   nhập đơn hàng
+  POST /api/kho/bom/create {token, mapping, name?, boards?}
+  GET  /api/kho/boms        GET /api/kho/bom?id=&boards=
+  POST /api/kho/bom/update {id, name?, boards?}    POST /api/kho/bom/line {line_id, part_id?, qty?, dnp?}
+  POST /api/kho/bom/rematch {id}   POST /api/kho/bom/add-missing {id}   POST /api/kho/bom/consume {id, boards}
+  POST /api/kho/bom/delete {id}
+  GET  /api/kho/bom/shortage.csv?id=&boards=&supplier=lcsc|all    GET /api/kho/export.csv
+
 Mọi POST bắt buộc có header "X-BPI: 1". Trình duyệt không cho trang web lạ tự gắn header này
 khi gửi sang board (CORS), và cookie phiên là SameSite=Strict, nên trang độc hại không bấm hộ được.
 """
@@ -747,6 +763,15 @@ except Exception as e:  # noqa: BLE001
     TRAFFIC = None
 
 
+# ---------------------------------------------------------------- Kho linh kiện (kho.py)
+try:
+    import kho as _kho
+    KHO = _kho.Kho()
+except Exception as e:  # noqa: BLE001
+    print(f"Kho linh kiện tắt: {e}", flush=True)
+    KHO = None
+
+
 # ---------------------------------------------------------------- IoT / MQTT (iot.py)
 import iot as _iot
 IOT_AUTH = _iot.Auth()
@@ -1109,6 +1134,84 @@ class Handler(BaseHTTPRequestHandler):
     def need_login(self):
         self._send(401, {"error": "Cần đăng nhập", "login": True})
 
+    def kho_get(self, path, q):
+        if KHO is None:
+            return self._send(503, {"error": "Kho chưa bật (xem log server)"})
+        g = lambda k, d="": q.get(k, [d])[0]  # noqa: E731
+        if path == "/api/kho/meta":
+            return self._send(200, KHO.meta())
+        if path == "/api/kho/parts":
+            return self._send(200, KHO.list_parts(g("q"), g("category"), g("location"), g("low") == "1",
+                                                  int(g("limit", "200") or 200), int(g("offset", "0") or 0),
+                                                  g("sort", "updated")))
+        if path == "/api/kho/part":
+            return self._send(200, KHO.get_part(int(g("id", "0") or 0)))
+        if path == "/api/kho/boms":
+            return self._send(200, KHO.boms())
+        if path == "/api/kho/bom":
+            return self._send(200, KHO.bom(int(g("id", "0") or 0), g("boards") or None))
+        if path == "/api/kho/bom/shortage.csv":
+            bid = int(g("id", "0") or 0)
+            csv_text = KHO.bom_shortage_csv(bid, g("boards") or None, g("supplier", "lcsc"))
+            return self._send(200, "\ufeff" + csv_text, "text/csv", headers={
+                "Content-Disposition": f'attachment; filename="thieu-bom-{bid}.csv"'})
+        if path == "/api/kho/export.csv":
+            return self._send(200, KHO.export_csv(), "text/csv", headers={
+                "Content-Disposition": f'attachment; filename="kho-{time.strftime("%Y%m%d")}.csv"'})
+        return self._send(404, {"error": "not found"})
+
+    def kho_post(self, path, body):
+        if KHO is None:
+            raise OSError("Kho chưa bật (xem log server)")
+        i = lambda k: int(body.get(k) or 0)  # noqa: E731
+        if path == "/api/kho/part":
+            return self._send(200, KHO.save_part(body))
+        if path == "/api/kho/part/delete":
+            KHO.delete_part(i("id"))
+            return self._send(200, {"ok": True})
+        if path == "/api/kho/stock":
+            return self._send(200, KHO.adjust(i("id"), body.get("delta"), body.get("set"),
+                                              body.get("reason", ""), body.get("ref", "")))
+        if path == "/api/kho/import":
+            return self._send(200, KHO.import_stock(body.get("token", ""), body.get("mapping"), body.get("mode", "add"),
+                                                    body.get("supplier", ""), body.get("location", ""),
+                                                    body.get("category", ""), body.get("ref", "")))
+        if path == "/api/kho/bom/create":
+            return self._send(200, KHO.bom_create(body.get("token", ""), body.get("mapping"), body.get("name", ""),
+                                                  body.get("boards", 1)))
+        if path == "/api/kho/bom/update":
+            return self._send(200, KHO.bom_update(i("id"), body.get("name"), body.get("boards"), body.get("notes")))
+        if path == "/api/kho/bom/line":
+            return self._send(200, KHO.bom_set_line(i("line_id"), body.get("part_id"), body.get("qty"), body.get("dnp")))
+        if path == "/api/kho/bom/rematch":
+            return self._send(200, KHO.bom_rematch(i("id")))
+        if path == "/api/kho/bom/add-missing":
+            return self._send(200, KHO.bom_add_missing(i("id")))
+        if path == "/api/kho/bom/consume":
+            return self._send(200, KHO.bom_consume(i("id"), body.get("boards")))
+        if path == "/api/kho/bom/delete":
+            KHO.bom_delete(i("id"))
+            return self._send(200, {"ok": True})
+        return self._send(404, {"error": "not found"})
+
+    def kho_upload(self, url, length):
+        """POST /api/kho/preview?name=&kind=: thân request là file CSV/XLSX (không multipart)."""
+        if self.headers.get("X-BPI") != "1":
+            self.close_connection = True
+            return self._send(400, {"error": "thiếu header X-BPI"})
+        if not self.is_admin():
+            self.close_connection = True
+            return self.need_login()
+        if KHO is None or length > _kho.MAX_UPLOAD:
+            self.close_connection = True
+            return self._send(413 if KHO else 503, {"error": "File quá lớn (tối đa 5 MB)" if KHO else "Kho chưa bật"})
+        data = self.rfile.read(length) if length else b""
+        q = parse_qs(url.query)
+        try:
+            return self._send(200, KHO.preview(q.get("name", ["file.csv"])[0], data, q.get("kind", ["stock"])[0]))
+        except ValueError as e:
+            return self._send(400, {"error": str(e)})
+
     def iot_get(self, path, q):
         if path == "/api/iot/whoami":
             return self._send(200, {"iot": self.is_iot(), "admin": self.is_admin(), "local": self.is_local(),
@@ -1172,6 +1275,18 @@ class Handler(BaseHTTPRequestHandler):
         path, q = url.path, parse_qs(url.query)
         if path.startswith(LUCI_PREFIXES):
             return self.proxy_luci()
+        if path in ("/kho", "/kho.html"):
+            if not self.is_admin():   # trang kho chỉ cho quản trị viên: chưa đăng nhập thì về trang đăng nhập
+                return self._send(302, "", "text/plain", headers={"Location": "/"})
+            with open(os.path.join(HERE, "kho.html"), "rb") as f:
+                return self._send(200, f.read(), "text/html")
+        if path.startswith("/api/kho/"):
+            if not self.is_admin():
+                return self.need_login()
+            try:
+                return self.kho_get(path, q)
+            except ValueError as e:
+                return self._send(400, {"error": str(e)})
         if path in ("/iot", "/iot.html"):
             with open(os.path.join(HERE, "iot.html"), "rb") as f:
                 return self._send(200, f.read(), "text/html")
@@ -1257,6 +1372,8 @@ class Handler(BaseHTTPRequestHandler):
         url = urlparse(self.path)
         if url.path == "/api/music/upload":
             return self.music_upload(url, length)
+        if url.path == "/api/kho/preview":
+            return self.kho_upload(url, length)
         if url.path.startswith(LUCI_PREFIXES):   # form của LuCI không có X-BPI; LuCI tự chống CSRF bằng token
             return self.proxy_luci(length)
         if length > 65536:
@@ -1279,6 +1396,8 @@ class Handler(BaseHTTPRequestHandler):
                                   headers={"Set-Cookie": self.cookie_header(token, SESSION_DAYS * 86400)})
             if not self.is_admin():
                 return self.need_login()
+            if url.path.startswith("/api/kho/"):
+                return self.kho_post(url.path, body)
             if self.path == "/api/logout":
                 end_session(self.session_token())
                 return self._send(200, {"ok": True}, headers={"Set-Cookie": self.cookie_header("", 0)})
@@ -1327,7 +1446,8 @@ class Handler(BaseHTTPRequestHandler):
     def log_message(self, fmt, *args):
         # Bỏ log các lần trang tự cập nhật trạng thái để log dễ đọc.
         if any(p in (str(args[0]) if args else "") for p in ("/api/status", "/camera.jpg", "/api/traffic/recent", "/luci-static/",
-                                                                   "GET /api/speaker", "GET /api/iot/devices")):
+                                                                   "GET /api/speaker", "GET /api/iot/devices",
+                                                                   "GET /api/kho/meta")):
             return
         super().log_message(fmt, *args)
 

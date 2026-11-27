@@ -20,7 +20,7 @@ function Convert-ToLF([string]$name) {
 # Board vào bằng khóa ~/.ssh/id_ed25519 (root có mật khẩu). BatchMode: thiếu khóa thì báo lỗi, không treo hỏi mật khẩu.
 ssh @opt -o BatchMode=yes $dst "mkdir -p /root/server"
 if ($LASTEXITCODE) { throw "Khong SSH duoc bang khoa. Them khoa: type `$env:USERPROFILE\.ssh\id_ed25519.pub | ssh root@$Board `"cat >> /etc/dropbear/authorized_keys`"" }
-foreach ($f in "app.py", "vision.py", "traffic.py", "music.py", "speaker.py", "iot.py", "index.html", "iot.html") {
+foreach ($f in "app.py", "vision.py", "traffic.py", "music.py", "speaker.py", "iot.py", "kho.py", "index.html", "iot.html", "kho.html") {
     scp @opt "$PSScriptRoot\$f" "${dst}:/root/server/"
     if ($LASTEXITCODE) { throw "Copy $f failed" }
 }

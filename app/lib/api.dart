@@ -240,6 +240,15 @@ class Api extends ChangeNotifier {
     _check(res);
   }
 
+  /// Tải lên dữ liệu thô (file CSV/XLSX…) tới [path], trả về JSON.
+  Future<dynamic> uploadBytes(String path, List<int> data) async {
+    final r = await _client
+        .post(Uri.parse(url(path)),
+            headers: {..._headers(), 'Content-Type': 'application/octet-stream'}, body: data)
+        .timeout(const Duration(seconds: 60));
+    return _check(r);
+  }
+
   /// Gọi thẳng tới một địa chỉ khác (dùng khi đổi IP LAN để xác nhận IP mới).
   Future<bool> ping(String fullUrl) async {
     try {
