@@ -2,6 +2,8 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
+	<key>NSPhotoLibraryUsageDescription</key>
+	<string>Chọn ảnh nhãn linh kiện để đọc chữ</string>
 	<key>NSCameraUsageDescription</key>
 	<string>Quét mã QR / mã vạch trên nhãn linh kiện</string>
 	<key>NSAppTransportSecurity</key>

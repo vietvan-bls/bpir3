@@ -99,6 +99,14 @@ def mpn_key(s):
     return re.sub(r"[\s\-_/.,]+", "", str(s or "")).upper()
 
 
+_OCR_FIX = str.maketrans("OISBZQ", "015820")
+
+
+def mpn_fuzzy(s):
+    """Khóa so khớp gần đúng cho MPN đọc bằng OCR: coi O=0, I=1, S=5, B=8, Z=2, Q=0."""
+    return mpn_key(s).translate(_OCR_FIX)
+
+
 def _num(s, default=None):
     if s is None:
         return default
@@ -283,10 +291,12 @@ def parse_label(code):
         for part in re.split(r",(?=\s*\w+\s*:)", code.strip().strip("{}")):
             k, _, v = part.partition(":")
             d[k.strip().lower()] = v.strip().strip('"')
-        out.update(supplier="lcsc", lcsc=d.get("pc", "").upper(), mpn=d.get("pm", ""), qty=_int(d.get("qty"), 0),
+        pc = d.get("pc", "").upper()
+        out.update(supplier="lcsc" if pc else "", lcsc=pc, mpn=d.get("pm", ""), qty=_int(d.get("qty"), 0),
                    order=d.get("on", ""))
-        if d.get("pbn") or d.get("on"):
-            out["label_id"] = f"lcsc:{d.get('on', '')}:{d.get('pbn', '')}:{d.get('pc', '')}"
+        # nhận diện nhãn theo mã đơn + mã LCSC (không dùng mã pick) để quét QR hay chụp chữ đều chống cộng trùng
+        if d.get("on") and (pc or d.get("pm")):
+            out["label_id"] = f"lcsc:{d['on']}:{pc or mpn_key(d.get('pm'))}"
         return out
     if code.startswith("[)>") or (sum(code.count(c) for c in GS_CHARS) >= 2):
         fields = [f for f in re.split("[" + GS_CHARS + "]", code) if f]
@@ -492,6 +502,11 @@ class Kho:
             r = self._q("SELECT id FROM parts WHERE mpn_key = ? LIMIT 1", (k,))
             if r:
                 return r[0]["id"], "mpn"
+        if len(k) >= 6:   # OCR đọc nhầm O/0, S/5…: so khớp gần đúng
+            fk = mpn_fuzzy(k)
+            for row in self._q("SELECT id, mpn_key FROM parts WHERE mpn_key != '' AND length(mpn_key) = ?", (len(k),)):
+                if mpn_fuzzy(row["mpn_key"]) == fk:
+                    return row["id"], "mpn gần đúng"
         if value and package:
             r = self._q("SELECT id FROM parts WHERE value = ? COLLATE NOCASE AND package = ? COLLATE NOCASE "
                         "ORDER BY qty DESC LIMIT 1", (value.strip(), package.strip()))

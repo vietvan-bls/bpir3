@@ -8,6 +8,7 @@ import 'package:material_ui/material_ui.dart';
 import '../api.dart';
 import '../main.dart';
 import '../util.dart';
+import 'ocr.dart';
 import 'scan.dart';
 
 /// Kho linh kiện: dùng API /api/kho/* của server trên board (kho.py).
@@ -180,6 +181,13 @@ class _KhoScreenState extends State<KhoScreen> {
                 label: const Text('Nhập mã LCSC'),
                 onPressed: () async {
                   if (await addByLcscCode(context) != null) _reload();
+                }),
+            const SizedBox(width: 8),
+            ActionChip(
+                avatar: const Icon(Icons.document_scanner_outlined, size: 18),
+                label: const Text('Chụp nhãn'),
+                onPressed: () async {
+                  if (await ocrLabelMenu(context) != null) _reload();
                 }),
             const SizedBox(width: 8),
             ActionChip(

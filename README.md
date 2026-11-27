@@ -260,6 +260,10 @@ Mở: `http://192.168.2.1:8080/kho` / `https://bpi-r3.tail24dd60.ts.net/kho`, ho
   (chuẩn ANSI MH10.8.2), mã `C…` hoặc link sản phẩm LCSC; chữ khác thì tìm trong kho. Đã có → cộng số lượng của nhãn;
   chưa có → tạo mới, **tự điền từ LCSC** (mô tả, giá trị, package, hãng, loại, datasheet, ảnh, giá). Mỗi nhãn chỉ cộng
   một lần (nhớ theo mã đơn + mã pick), quét lại sẽ cảnh báo. Quét liên tục được, vị trí nhớ từ lần trước.
+- **🔤 Chụp nhãn (không có QR)**: app chụp / chọn ảnh nhãn, đọc chữ ngay trên máy (Google ML Kit, không cần mạng),
+  tách mã LCSC (sửa lỗi O→0, I→1, C đọc thành 6…), MPN, số lượng, mã đơn, mã Digi-Key; sửa / chạm chọn cụm chữ rồi
+  đi tiếp như quét QR. Server khớp MPN gần đúng (O=0, S=5, I=1…) để MPN đọc sai vẫn ra đúng linh kiện.
+  Chỉ có MPN (không mã LCSC) thì không tra được thông số: API tìm kiếm của LCSC chặn truy cập tự động.
   Thông tin LCSC lấy từ API của trang lcsc.com (không chính thức, có thể đổi), lưu đệm 30 ngày; nút “Điền từ LCSC”
   ở chi tiết linh kiện để cập nhật.
 - **⚠️ Sắp hết**: linh kiện có “Cảnh báo khi ≤” > 0 và số lượng ≤ mức đó; hiện số đếm ở đầu trang và trong app.

@@ -4,6 +4,7 @@ import 'package:mobile_scanner/mobile_scanner.dart';
 import '../api.dart';
 import '../main.dart';
 import '../util.dart';
+import 'ocr.dart';
 import 'kho.dart';
 
 /// Tra một mã (QR, C…, chữ) rồi hiện bảng nhập kho. Trả về tên linh kiện nếu đã nhập.
@@ -123,6 +124,21 @@ class _ScanScreenState extends State<ScanScreen> {
           title: const Text('Quét nhãn linh kiện'),
           actions: [
             IconButton(icon: const Icon(Icons.flashlight_on_outlined), tooltip: 'Đèn', onPressed: () => _ctrl.toggleTorch()),
+            IconButton(
+                icon: const Icon(Icons.document_scanner_outlined),
+                tooltip: 'Chụp nhãn (không có QR)',
+                onPressed: () async {
+                  await _ctrl.stop();
+                  if (!mounted) return;
+                  final done = await ocrLabelMenu(context);
+                  if (done != null && mounted) {
+                    setState(() {
+                      _count++;
+                      _last = done;
+                    });
+                  }
+                  await _ctrl.start();
+                }),
             IconButton(icon: const Icon(Icons.keyboard), tooltip: 'Nhập mã bằng tay', onPressed: _manual),
           ],
         ),
@@ -161,7 +177,7 @@ class _ScanScreenState extends State<ScanScreen> {
                 _busy
                     ? 'Đang đọc…'
                     : _count == 0
-                        ? 'Đưa QR / mã vạch trên túi LCSC (hoặc Digi-Key) vào khung'
+                        ? 'Đưa QR / mã vạch trên túi LCSC (hoặc Digi-Key) vào khung\nKhông có mã? Bấm biểu tượng chụp nhãn ở trên'
                         : 'Đã nhập $_count nhãn · gần nhất: $_last\nQuét tiếp nhãn kế tiếp',
                 textAlign: TextAlign.center,
                 style: const TextStyle(color: Colors.white),
