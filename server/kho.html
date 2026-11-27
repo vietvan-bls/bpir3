@@ -82,6 +82,10 @@
   .maptbl select { width: 100%; min-width: 110px; }
   .maptbl td { white-space: nowrap; max-width: 220px; overflow: hidden; text-overflow: ellipsis; }
   .show-m { display: none; }
+  body.customer .admin-only, body.admin .customer-only { display: none !important; }
+  .owner-tag { font-size: .7rem; padding: 1px 6px; border-radius: 4px; background: color-mix(in srgb, var(--accent) 15%, transparent);
+               color: var(--accent); margin-left: 4px; white-space: nowrap; }
+  .login { min-height: 85vh; display: flex; align-items: center; justify-content: center; }
   @media (max-width: 640px) {
     body { padding: 10px; }
     .hide-m { display: none; }
@@ -91,24 +95,48 @@
 </style>
 </head>
 <body>
-<main>
+<div id="loginScreen" class="login" style="display:none">
+  <form class="card" style="width:min(360px,100%)" onsubmit="event.preventDefault(); khoLogin()">
+    <h1 style="margin:0 0 4px">🧰 Kho linh kiện</h1>
+    <p class="note" style="margin:0 0 14px">Đăng nhập bằng tài khoản kho được cấp.</p>
+    <input id="lgUser" class="inp" style="width:100%" placeholder="Tên đăng nhập" autocomplete="username" autocapitalize="off" required>
+    <input id="lgPw" class="inp" style="width:100%;margin-top:8px" type="password" placeholder="Mật khẩu" autocomplete="current-password" required>
+    <button class="primary" type="submit" style="width:100%;margin-top:12px">Đăng nhập</button>
+    <p class="note" id="lgErr" style="color:var(--bad)"></p>
+    <p class="note">Chủ kho: <a href="/">đăng nhập trang quản trị</a> rồi mở lại trang này.</p>
+  </form>
+</div>
+<dialog id="dlgCred">
+  <h2 id="crTitle"></h2>
+  <p class="note" style="margin:0 0 8px">Gửi cho khách; mật khẩu chỉ hiện <b>một lần</b> (quên thì đặt lại).</p>
+  <pre id="crText" style="background:var(--bg);padding:10px;border-radius:8px;white-space:pre-wrap;font-size:.9rem"></pre>
+  <div class="row" style="justify-content:flex-end;margin-top:12px">
+    <button onclick="copyCred()">Sao chép</button><button class="primary" onclick="dlgCred.close()">Xong</button>
+  </div>
+</dialog>
+<main id="app" style="display:none">
   <header>
     <h1>🧰 Kho linh kiện</h1>
     <span id="hdrLow" class="badge bad" style="display:none;cursor:pointer" onclick="showTab('low')"></span>
     <span class="spacer"></span>
-    <a href="/"><button class="small">← Trang chính</button></a>
+    <label class="row admin-only" style="gap:6px;font-size:.85rem">Kho của
+      <select id="ownerSel" class="inp" style="padding:5px 8px"></select></label>
+    <span id="whoBadge" class="badge customer-only"></span>
+    <button class="small customer-only" onclick="khoLogout()">Đăng xuất</button>
+    <a href="/" class="admin-only"><button class="small">← Trang chính</button></a>
   </header>
   <nav class="tabs" id="tabs">
     <button data-tab="parts">📦 Kho</button>
     <button data-tab="bom">📋 BOM</button>
-    <button data-tab="import">📥 Nhập hàng</button>
+    <button data-tab="import" class="admin-only">📥 Nhập hàng</button>
     <button data-tab="low">⚠️ Sắp hết <span id="lowCnt"></span></button>
+    <button data-tab="customers" class="admin-only">👥 Khách</button>
   </nav>
 
   <!-- ===================== Kho ===================== -->
   <section class="tab" data-tab="parts">
     <div class="stats" id="stats"></div>
-    <form class="row section" onsubmit="event.preventDefault(); scanCode($('scanIn').value)">
+    <form class="row section admin-only" onsubmit="event.preventDefault(); scanCode($('scanIn').value)">
       <input id="scanIn" class="inp" style="flex:1 1 240px" placeholder="📷 Quét / dán mã nhãn (QR LCSC, C25804, DataMatrix Digi-Key…) rồi Enter" autocomplete="off">
       <button type="submit">Đọc mã</button>
     </form>
@@ -120,7 +148,7 @@
         <option value="updated">Mới sửa</option><option value="mpn">MPN</option><option value="category">Loại / giá trị</option>
         <option value="location">Vị trí</option><option value="qty">Số lượng ít trước</option>
       </select>
-      <button class="primary" onclick="editPart()">+ Thêm</button>
+      <button class="primary admin-only" onclick="editPart()">+ Thêm</button>
     </div>
     <div class="card table-wrap">
       <table>
@@ -130,7 +158,7 @@
       <div class="row" style="margin-top:10px"><span class="label" id="pageInfo"></span><span class="spacer"></span>
         <button class="small" id="btnMore" onclick="loadParts(true)">Xem thêm</button></div>
     </div>
-    <p class="note"><a href="/api/kho/export.csv">⬇ Xuất toàn bộ kho ra CSV</a> (mở được bằng Excel) · Dữ liệu tự sao lưu mỗi ngày trên thẻ nhớ.</p>
+    <p class="note"><a id="expLink" href="/api/kho/export.csv">⬇ Xuất kho ra CSV</a> (mở được bằng Excel) · Dữ liệu tự sao lưu mỗi ngày trên thẻ nhớ.</p>
   </section>
 
   <!-- ===================== BOM ===================== -->
@@ -160,11 +188,11 @@
         </div>
         <div class="row" style="margin-top:10px">
           <button onclick="bomAct('rematch')" title="Khớp lại các dòng chưa khớp với kho">↻ Khớp lại</button>
-          <button onclick="bomAct('add-missing')" title="Tạo linh kiện (SL 0) cho dòng chưa có trong kho">+ Thêm dòng thiếu vào kho</button>
+          <button class="admin-only" onclick="bomAct('add-missing')" title="Tạo linh kiện (SL 0) cho dòng chưa có trong kho">+ Thêm dòng thiếu vào kho</button>
           <a id="dlLcsc"><button>⬇ Cần mua (LCSC)</button></a>
           <a id="dlAll"><button>⬇ Cần mua (đủ cột)</button></a>
           <span class="spacer"></span>
-          <button class="primary" id="btnConsume" onclick="consumeBom()">🔧 Lắp bo: trừ kho</button>
+          <button class="primary admin-only" id="btnConsume" onclick="consumeBom()">🔧 Lắp bo: trừ kho</button>
         </div>
       </div>
       <div class="card table-wrap">
@@ -199,6 +227,23 @@
   </section>
 
   <!-- ===================== Sắp hết ===================== -->
+  <section class="tab" data-tab="customers">
+    <div class="card section">
+      <h2>Thêm khách</h2>
+      <form class="row" onsubmit="event.preventDefault(); saveCustomer()">
+        <input id="cuName" class="inp" style="flex:2 1 160px" placeholder="Tên khách / công ty" required>
+        <input id="cuPhone" class="inp" style="flex:1 1 120px" placeholder="Điện thoại">
+        <input id="cuNote" class="inp" style="flex:2 1 160px" placeholder="Ghi chú">
+        <button class="primary" type="submit" id="cuBtn">+ Thêm khách</button>
+        <button type="button" id="cuCancel" style="display:none" onclick="resetCustomerForm()">Hủy sửa</button>
+      </form>
+      <p class="note">Linh kiện của khách nằm riêng: cùng một MPN của bạn và của khách là 2 dòng khác nhau.
+        Chọn “Kho của” ở đầu trang để xem / nhập hàng cho từng khách. Tài khoản khách chỉ xem được hàng + BOM của chính họ
+        (kiểm tra BOM thiếu gì), không sửa số lượng. Khách đăng nhập tại <code id="khoUrl"></code>.</p>
+    </div>
+    <div id="custList"></div>
+  </section>
+
   <section class="tab" data-tab="low">
     <div class="card table-wrap">
       <table>
@@ -219,7 +264,7 @@
   <div class="row" style="margin:14px 0 6px">
     <span class="qty" id="dpQty" style="font-size:1.8rem"></span><span class="label" id="dpMin"></span>
   </div>
-  <div class="row qbtns">
+  <div class="row qbtns admin-only">
     <button onclick="quick(-10)">−10</button><button onclick="quick(-1)">−1</button>
     <button onclick="quick(1)">+1</button><button onclick="quick(10)">+10</button>
     <input id="dpDelta" class="inp" type="number" placeholder="±SL" style="width:90px">
@@ -232,7 +277,7 @@
   <div id="dpBoms" class="note"></div>
   <h2 style="margin-top:14px">Lịch sử</h2>
   <div class="table-wrap" style="max-height:220px;overflow-y:auto"><table><tbody id="dpLog"></tbody></table></div>
-  <div class="row" style="margin-top:14px;justify-content:flex-end">
+  <div class="row admin-only" style="margin-top:14px;justify-content:flex-end">
     <button class="danger" onclick="deletePart()">Xóa</button><span class="spacer"></span>
     <button class="primary" onclick="editPart(curPart)">✏️ Sửa</button>
   </div>
@@ -252,6 +297,7 @@
       <label>Số lượng<input id="eQty" class="inp" type="number"></label>
       <label>Cảnh báo khi ≤<input id="eMin" class="inp" type="number" min="0" placeholder="0 = không cảnh báo"></label>
       <label>Đơn giá (USD)<input id="ePrice" class="inp" type="number" step="any"></label>
+      <label class="admin-only">Hàng của<select id="eOwner" class="inp"></select></label>
       <label>Datasheet (link)<input id="eDs" class="inp" type="url"></label>
     </div>
     <div class="grid2" style="margin-top:8px;grid-template-columns:1fr">
@@ -323,10 +369,33 @@ async function api(path, body) {
   const opt = body === undefined ? {} : {method: "POST", headers: {"Content-Type": "application/json", "X-BPI": "1"}, body: JSON.stringify(body)};
   const r = await fetch(path, opt);
   const j = await r.json().catch(() => ({}));
-  if (r.status === 401) { location.href = "/"; throw new Error("Cần đăng nhập"); }
+  if (r.status === 401) { showLogin(); throw new Error("Cần đăng nhập"); }
   if (!r.ok) throw new Error(j.error || r.statusText);
   return j;
 }
+// ------------------------------------------------ người dùng / chủ sở hữu
+let who = {role: null}, ownerSel = "all";
+const isAdmin = () => who.role === "admin";
+function ownerQ() { return isAdmin() ? "owner=" + encodeURIComponent(ownerSel) : ""; }      // phạm vi xem
+function newOwner() { return ownerSel === "all" ? 0 : +ownerSel; }                         // chủ của dữ liệu tạo mới
+function ownerName(id) { return !id ? "Của tôi" : ((who.customers || []).find(c => c.id === id) || {}).name || "Khách " + id; }
+function ownerOptions(sel) {
+  return `<option value="0">Của tôi</option>` + (who.customers || []).map(c => `<option value="${c.id}" ${c.id === sel ? "selected" : ""}>${esc(c.name)}</option>`).join("");
+}
+function fillOwnerSel() {
+  const cur = ownerSel;
+  $("ownerSel").innerHTML = `<option value="all">Tất cả</option>` + ownerOptions(-1);
+  $("ownerSel").value = [...$("ownerSel").options].some(o => o.value === cur) ? cur : "all"; ownerSel = $("ownerSel").value;
+}
+function showLogin() {
+  $("app").style.display = "none"; $("loginScreen").style.display = "flex"; $("lgUser").focus();
+}
+async function khoLogin() {
+  $("lgErr").textContent = "";
+  try { await api("/api/kho/login", {username: $("lgUser").value.trim(), password: $("lgPw").value}); location.reload(); }
+  catch (e) { $("lgErr").textContent = e.message; }
+}
+async function khoLogout() { try { await api("/api/kho/logout", {}); } catch {} location.reload(); }
 function supUrl(s) {
   if (s.url) return s.url;
   const k = encodeURIComponent(s.sku);
@@ -344,7 +413,8 @@ const fmtT = (t) => new Date(t * 1000).toLocaleString("vi-VN", {hour12: false, d
 // ------------------------------------------------ meta / thống kê
 let meta = {};
 async function loadMeta() {
-  try { meta = await api("/api/kho/meta"); } catch { return; }
+  try { meta = await api("/api/kho/meta?" + ownerQ()); } catch { return; }
+  $("expLink").href = "/api/kho/export.csv?" + ownerQ();
   $("stats").innerHTML = [["Loại linh kiện", meta.n], ["Tổng số con", meta.pcs.toLocaleString("vi-VN")],
     ["Giá trị (USD)", meta.value.toFixed(2)], ["Sắp hết", meta.low], ["Hết hàng", meta.out], ["BOM", meta.boms]]
     .map(([l, v]) => `<div class="card stat"><div class="label">${l}</div><div class="v">${v}</div></div>`).join("");
@@ -361,7 +431,7 @@ async function loadMeta() {
 let parts = [], total = 0, qTimer = null;
 function partRow(p, extra) {
   return `<tr class="click" onclick="openPart(${p.id})">
-    <td><div class="mpn">${esc(partTitle(p))}</div><div class="sub">${esc(partSub(p))}</div></td>
+    <td><div class="mpn">${esc(partTitle(p))}${isAdmin() && ownerSel === "all" && p.owner_id ? `<span class="owner-tag">${esc(p.owner_name)}</span>` : ""}</div><div class="sub">${esc(partSub(p))}</div></td>
     ${extra === "low" ? "" : `<td class="hide-m">${esc(p.category)}${p.category && p.package ? " · " : ""}${esc(p.package)}</td>`}
     <td class="hide-m">${esc(p.location)}</td><td>${supTags(p.suppliers)}</td>
     <td class="num"><span class="qty ${p.low || p.qty <= 0 ? "low" : ""}">${p.qty.toLocaleString("vi-VN")}</span>${extra === "low" ? "" : p.low ? '<div class="sub">sắp hết</div>' : ""}</td>
@@ -370,6 +440,7 @@ function partRow(p, extra) {
 async function loadParts(more) {
   const q = new URLSearchParams({q: $("q").value.trim(), category: $("fCat").value, location: $("fLoc").value,
                                  sort: $("fSort").value, limit: 100, offset: more ? parts.length : 0});
+  if (isAdmin()) q.set("owner", ownerSel);
   let r; try { r = await api("/api/kho/parts?" + q); } catch (e) { toast("Lỗi: " + e.message); return; }
   parts = more ? parts.concat(r.items) : r.items; total = r.total;
   $("parts").innerHTML = parts.length ? parts.map(p => partRow(p)).join("")
@@ -380,7 +451,7 @@ async function loadParts(more) {
 $("q").addEventListener("input", () => { clearTimeout(qTimer); qTimer = setTimeout(() => loadParts(), 250); });
 ["fCat", "fLoc", "fSort"].forEach(id => $(id).addEventListener("change", () => loadParts()));
 async function loadLow() {
-  try { const r = await api("/api/kho/parts?low=1&sort=qty&limit=500");
+  try { const r = await api("/api/kho/parts?low=1&sort=qty&limit=500&" + ownerQ());
     $("lowParts").innerHTML = r.items.length ? r.items.map(p => partRow(p, "low")).join("") : '<tr><td colspan="5" class="empty">Không có linh kiện nào sắp hết 👍</td></tr>';
   } catch (e) { toast("Lỗi: " + e.message); }
 }
@@ -391,14 +462,14 @@ let scan = null, scanCodeStr = "", scanPickId = null;
 async function scanCode(code) {
   code = (code || "").trim(); if (!code) return;
   $("scanIn").value = "";
-  try { scan = await api("/api/kho/scan", {code}); } catch (e) { return toast("Lỗi: " + e.message); }
+  try { scan = await api("/api/kho/scan", {code, owner_id: newOwner()}); } catch (e) { return toast("Lỗi: " + e.message); }
   scanCodeStr = code; scanPickId = null;
   const lab = scan.label;
   if (lab.query) {   // chữ thường: coi như tìm kiếm
     if (scan.part) return openPart(scan.part.id);
     $("q").value = lab.query; showTab("parts"); return loadParts();
   }
-  $("scCodes").textContent = [lab.lcsc && "LCSC " + lab.lcsc, lab.digikey && "Digi-Key " + lab.digikey, lab.mpn && "MPN " + lab.mpn,
+  $("scCodes").textContent = "Kho của: " + ownerName(newOwner()) + " · " + [lab.lcsc && "LCSC " + lab.lcsc, lab.digikey && "Digi-Key " + lab.digikey, lab.mpn && "MPN " + lab.mpn,
                               lab.qty && "SL nhãn " + lab.qty, lab.order && "đơn " + lab.order].filter(Boolean).join(" · ");
   $("scWarn").style.display = scan.already ? "" : "none";
   if (scan.already) $("scWarn").textContent = `⚠️ Nhãn này đã nhập lúc ${fmtT(scan.already.ts)} (+${scan.already.qty}). Để 0 nếu chỉ xem.`;
@@ -423,7 +494,8 @@ async function scanApply() {
   const fields = {}; if ($("scLoc").value.trim()) fields.location = $("scLoc").value.trim(); if ($("scMin").value !== "") fields.min_qty = +$("scMin").value;
   const pid = scanPickId || (scan.part && scan.part.id);
   try {
-    const p = await api("/api/kho/scan/apply", {code: scanCodeStr, action: pid ? "add" : "create", part_id: pid, qty: +$("scQty").value || 0, fields});
+    const p = await api("/api/kho/scan/apply", {code: scanCodeStr, action: pid ? "add" : "create", part_id: pid, qty: +$("scQty").value || 0, fields,
+                                               owner_id: newOwner()});
     dlgScan.close(); toast(`${partTitle(p)}: còn ${p.qty}`); refreshAll(); $("scanIn").focus();
   } catch (e) { toast("Lỗi: " + e.message); }
 }
@@ -441,7 +513,7 @@ async function openPart(id) {
 }
 function renderPart() {
   const p = curPart;
-  $("dpTitle").textContent = partTitle(p); $("dpSub").textContent = partSub(p);
+  $("dpTitle").textContent = partTitle(p); $("dpSub").textContent = (isAdmin() ? "📦 " + (p.owner_name || "Của tôi") + " · " : "") + partSub(p);
   $("dpQty").textContent = p.qty.toLocaleString("vi-VN") + " con"; $("dpQty").className = "qty" + (p.low || p.qty <= 0 ? " low" : "");
   $("dpMin").textContent = p.min_qty ? `cảnh báo khi ≤ ${p.min_qty}` + (p.low ? " · ⚠️ sắp hết" : "") : "chưa đặt mức cảnh báo";
   const info = [["Loại", p.category], ["Package", p.package], ["Giá trị", p.value], ["Vị trí", p.location], ["Hãng", p.manufacturer],
@@ -451,7 +523,7 @@ function renderPart() {
   const hasLcsc = p.suppliers.some(s => s.supplier === "lcsc");
   $("dpSups").innerHTML = (p.image ? `<img src="${esc(p.image)}" style="float:right;width:90px;height:90px;object-fit:contain;border-radius:8px;margin-left:8px">` : "")
     + (p.suppliers.length ? '<div class="label">Mua ở</div>' + supTags(p.suppliers) : "")
-    + (hasLcsc ? ` <button class="small" onclick="lcscFill()" title="Điền mô tả, package, hãng, datasheet, ảnh còn trống">↻ Điền từ LCSC</button>` : "")
+    + (hasLcsc ? ` <button class="small admin-only" onclick="lcscFill()" title="Điền mô tả, package, hãng, datasheet, ảnh còn trống">↻ Điền từ LCSC</button>` : "")
     + '<div style="clear:both"></div>';
   $("dpBoms").innerHTML = p.boms.length ? "Dùng trong BOM: " + p.boms.map(b => `<a href="#" onclick="dlgPart.close();showTab('bom');openBom(${b.id});return false">${esc(b.name)}</a> (${b.qty}/bo)`).join(", ") : "";
   $("dpLog").innerHTML = p.log.length ? p.log.map(l => `<tr><td class="sub" style="white-space:nowrap">${fmtT(l.ts)}</td>
@@ -497,6 +569,7 @@ function editPart(p) {
   $("deTitle").textContent = p ? "Sửa " + partTitle(p) : "Thêm linh kiện";
   for (const [id, f] of Object.entries(EF)) $(id).value = p ? (p[f] ?? "") : (f === "qty" ? 0 : f === "min_qty" ? "" : "");
   $("eSups").innerHTML = ""; (p ? p.suppliers : [{supplier: "lcsc"}]).forEach(addSupRow);
+  $("eOwner").innerHTML = ownerOptions(p ? p.owner_id : newOwner()); $("eOwner").value = String(p ? p.owner_id : newOwner());
   if (dlgPart.open) dlgPart.close();
   dlgEdit.showModal(); $("eMpn").focus();
 }
@@ -506,6 +579,7 @@ async function savePart() {
   d.suppliers = [...document.querySelectorAll("#eSups .sup-row")].map(r => { const [s, sku, url] = r.querySelectorAll("select,input");
     return {supplier: s.value, sku: sku.value.trim(), url: url.value.trim()}; }).filter(s => s.sku || s.url);
   if (editing) d.id = editing.id;
+  if (isAdmin()) d.owner_id = +$("eOwner").value;
   try { const p = await api("/api/kho/part", d); dlgEdit.close(); toast("Đã lưu"); refreshAll(); openPart(p.id); }
   catch (e) { toast("Lỗi: " + e.message); }
 }
@@ -538,14 +612,15 @@ function showMap() {
   const opts = (i) => `<option value="">— bỏ qua —</option>` + Object.entries(p.fields).map(([f, l]) => `<option value="${f}" ${inv[i] === f ? "selected" : ""}>${l}</option>`).join("");
   $("dmHead").innerHTML = `<tr>${p.headers.map((h, i) => `<th><div>${esc(h)}</div><select class="inp" data-col="${i}">${opts(i)}</select></th>`).join("")}</tr>`;
   $("dmBody").innerHTML = p.sample_raw.map(r => `<tr>${p.headers.map((_, i) => `<td class="sub">${esc(r[i] ?? "")}</td>`).join("")}</tr>`).join("");
-  $("dmOpts").innerHTML = previewKind === "bom"
+  const ownerField = isAdmin() ? `<label class="label">Của<select id="mOwner" class="inp">${ownerOptions(newOwner())}</select></label>` : "";
+  $("dmOpts").innerHTML = ownerField + (previewKind === "bom"
     ? `<label class="label">Tên BOM<input id="mName" class="inp" value="${esc(p.name.replace(/\.[^.]+$/, ""))}"></label>
        <label class="label">Số bo<input id="mBoards" class="inp" type="number" min="1" value="1"></label>`
     : `<label class="label">Cách nhập<select id="mMode" class="inp"><option value="add">Cộng thêm (đơn hàng mới về)</option>
          <option value="set">Đặt đúng số lượng (file kiểm kê)</option></select></label>
        <label class="label">Vị trí cho linh kiện mới<input id="mLoc" class="inp" list="locList" placeholder="không bắt buộc"></label>
        <label class="label">Loại cho linh kiện mới<input id="mCat" class="inp" list="catList" placeholder="không bắt buộc"></label>
-       <label class="label">Ghi chú lịch sử<input id="mRef" class="inp" placeholder="vd mã đơn LCSC"></label>`;
+       <label class="label">Ghi chú lịch sử<input id="mRef" class="inp" placeholder="vd mã đơn LCSC"></label>`);
   $("dmOk").textContent = previewKind === "bom" ? "Tạo BOM" : "Nhập vào kho";
   dlgMap.showModal();
 }
@@ -555,11 +630,12 @@ async function commitFile() {
   $("dmOk").disabled = true;
   try {
     if (previewKind === "bom") {
-      const b = await api("/api/kho/bom/create", {token: preview.token, mapping, name: $("mName").value, boards: +$("mBoards").value || 1});
+      const b = await api("/api/kho/bom/create", {token: preview.token, mapping, name: $("mName").value, boards: +$("mBoards").value || 1,
+                                                  owner_id: isAdmin() ? +$("mOwner").value : undefined});
       dlgMap.close(); toast("Đã tạo BOM"); loadMeta(); showTab("bom"); openBom(b.id);
     } else {
       const r = await api("/api/kho/import", {token: preview.token, mapping, mode: $("mMode").value, location: $("mLoc").value,
-                                              category: $("mCat").value, ref: $("mRef").value});
+                                              category: $("mCat").value, ref: $("mRef").value, owner_id: +$("mOwner").value});
       dlgMap.close(); toast(`Xong: ${r.created} mới, ${r.updated} cập nhật${r.skipped ? ", bỏ qua " + r.skipped : ""}`);
       showTab("parts"); refreshAll();
     }
@@ -570,8 +646,8 @@ async function commitFile() {
 // ------------------------------------------------ BOM
 let curBom = null;
 async function loadBoms() {
-  try { const r = await api("/api/kho/boms");
-    $("boms").innerHTML = r.length ? r.map(b => `<tr class="click" onclick="openBom(${b.id})"><td class="mpn">${esc(b.name)}</td>
+  try { const r = await api("/api/kho/boms?" + ownerQ());
+    $("boms").innerHTML = r.length ? r.map(b => `<tr class="click" onclick="openBom(${b.id})"><td class="mpn">${esc(b.name)}${isAdmin() && ownerSel === "all" ? `<span class="owner-tag">${esc(b.owner_name || "Của tôi")}</span>` : ""}</td>
       <td class="num">${b.lines}</td><td class="num">${b.unmatched ? `<span class="badge bad">${b.unmatched}</span>` : "0"}</td>
       <td class="hide-m sub">${fmtT(b.created)}</td><td class="num">›</td></tr>`).join("") : '<tr><td colspan="5" class="empty">Chưa có BOM nào.</td></tr>';
   } catch (e) { toast("Lỗi: " + e.message); }
@@ -583,7 +659,7 @@ async function openBom(id, boards) {
 }
 function renderBom() {
   const b = curBom, s = b.summary, n = b.boards_view;
-  $("bomName").textContent = b.name;
+  $("bomName").textContent = b.name + (isAdmin() ? "  ·  " + (b.owner_name || "Của tôi") : "");
   if (document.activeElement !== $("bomBoards")) $("bomBoards").value = n;
   $("bomSum").innerHTML = `<span class="badge ok">${s.ok} đủ</span>` + (s.short ? `<span class="badge warn">${s.short} thiếu</span>` : "")
     + (s.missing ? `<span class="badge bad">${s.missing} chưa có trong kho</span>` : "") + (s.dnp ? `<span class="badge">${s.dnp} DNP</span>` : "")
@@ -639,7 +715,8 @@ function openPick(lineId) {
   $("pkQ").value = pickLine.mpn || pickLine.value || ""; dlgPick.showModal(); searchPick();
 }
 async function searchPick() {
-  try { const r = await api("/api/kho/parts?limit=40&q=" + encodeURIComponent($("pkQ").value.trim()));
+  const ow = isAdmin() ? "&owner=" + (pickLine ? curBom.owner_id : newOwner()) : "";   // chỉ hàng cùng chủ sở hữu
+  try { const r = await api("/api/kho/parts?limit=40&q=" + encodeURIComponent($("pkQ").value.trim()) + ow);
     $("pkList").innerHTML = r.items.length ? r.items.map(p => `<tr class="click" onclick="pickPart(${p.id})"><td><div class="mpn">${esc(partTitle(p))}</div>
       <div class="sub">${esc([p.package, p.location, partSub(p)].filter(Boolean).join(" · "))}</div></td><td class="num qty">${p.qty}</td></tr>`).join("")
       : '<tr><td class="empty">Không tìm thấy. Thêm linh kiện ở tab 📦 Kho trước.</td></tr>';
@@ -658,17 +735,86 @@ async function pickPart(pid) {
 
 // ------------------------------------------------ tabs
 let curTab = "parts";
+// ------------------------------------------------ khách (chỉ quản lý)
+let custs = [], editingCust = null;
+async function loadCustomers() {
+  try { custs = await api("/api/kho/customers"); } catch (e) { return toast("Lỗi: " + e.message); }
+  who.customers = custs.map(c => ({id: c.id, name: c.name})); fillOwnerSel();
+  $("khoUrl").textContent = location.origin + "/kho";
+  $("custList").innerHTML = custs.length ? custs.map(c => `<div class="card section">
+    <div class="row"><h2 style="margin:0">${esc(c.name)}</h2><span class="sub">${esc([c.phone, c.note].filter(Boolean).join(" · "))}</span><span class="spacer"></span>
+      <button class="small" onclick="viewOwner(${c.id})">Xem hàng</button>
+      <button class="small" onclick="editCustomer(${c.id})">Sửa</button>
+      <button class="small danger" onclick="deleteCustomer(${c.id})">Xóa</button></div>
+    <div class="sub" style="margin:6px 0">${c.parts} loại · ${c.pcs.toLocaleString("vi-VN")} con · ${c.boms} BOM</div>
+    <div class="label">Tài khoản đăng nhập</div>
+    ${c.users.map(u => `<div class="row" style="margin-top:4px"><code>${esc(u.username)}</code>
+      <span class="sub">${u.last_login ? "đăng nhập " + fmtT(u.last_login) : "chưa đăng nhập"}</span><span class="spacer"></span>
+      <button class="small" onclick="resetUser(${c.id}, '${esc(u.username)}')">Đặt lại mật khẩu</button>
+      <button class="small danger" onclick="deleteUser('${esc(u.username)}')">Xóa</button></div>`).join("") || '<div class="sub">Chưa có</div>'}
+    <button class="small" style="margin-top:8px" onclick="addUser(${c.id})">+ Tạo tài khoản</button></div>`).join("")
+    : '<div class="card empty">Chưa có khách nào.</div>';
+}
+function resetCustomerForm() { editingCust = null; ["cuName", "cuPhone", "cuNote"].forEach(i => $(i).value = ""); $("cuBtn").textContent = "+ Thêm khách"; $("cuCancel").style.display = "none"; }
+function editCustomer(id) {
+  const c = custs.find(x => x.id === id); editingCust = id;
+  $("cuName").value = c.name; $("cuPhone").value = c.phone; $("cuNote").value = c.note; $("cuBtn").textContent = "Lưu"; $("cuCancel").style.display = ""; $("cuName").focus();
+}
+async function saveCustomer() {
+  try { await api("/api/kho/customers", {action: "save", id: editingCust, name: $("cuName").value, phone: $("cuPhone").value, note: $("cuNote").value});
+        resetCustomerForm(); loadCustomers(); toast("Đã lưu"); }
+  catch (e) { toast("Lỗi: " + e.message); }
+}
+async function deleteCustomer(id) {
+  const c = custs.find(x => x.id === id);
+  if (!confirm(`Xóa khách “${c.name}” và các tài khoản của họ?`)) return;
+  try { await api("/api/kho/customers", {action: "delete", id}); loadCustomers(); } catch (e) { toast("Lỗi: " + e.message); }
+}
+function viewOwner(id) { ownerSel = String(id); $("ownerSel").value = ownerSel; showTab("parts"); refreshAll(); }
+function showCred(r, title) {
+  $("crTitle").textContent = title;
+  $("crText").textContent = `Trang kho: ${location.origin}/kho\nTên đăng nhập: ${r.username}\nMật khẩu: ${r.password}`;
+  dlgCred.showModal();
+}
+async function copyCred() { try { await navigator.clipboard.writeText($("crText").textContent); toast("Đã sao chép"); } catch { prompt("Sao chép:", $("crText").textContent); } }
+async function addUser(cid) {
+  const u = prompt("Tên đăng nhập cho khách (chữ thường, số, . _ -)"); if (!u) return;
+  const pw = prompt("Mật khẩu (để trống: tự tạo)", "") ?? ""; 
+  try { showCred(await api("/api/kho/users", {action: "save", customer_id: cid, username: u, password: pw}), "Tài khoản mới"); loadCustomers(); }
+  catch (e) { toast("Lỗi: " + e.message); }
+}
+async function resetUser(cid, u) {
+  const pw = prompt(`Mật khẩu mới cho ${u} (để trống: tự tạo). Máy đang đăng nhập sẽ bị đăng xuất.`, ""); if (pw === null) return;
+  try { showCred(await api("/api/kho/users", {action: "save", customer_id: cid, username: u, password: pw}), "Mật khẩu mới"); loadCustomers(); }
+  catch (e) { toast("Lỗi: " + e.message); }
+}
+async function deleteUser(u) {
+  if (!confirm(`Xóa tài khoản ${u}?`)) return;
+  try { await api("/api/kho/users", {action: "delete", username: u}); loadCustomers(); } catch (e) { toast("Lỗi: " + e.message); }
+}
+
 function showTab(name) {
-  if (!["parts", "bom", "import", "low"].includes(name)) name = "parts";
+  const allowed = isAdmin() ? ["parts", "bom", "import", "low", "customers"] : ["parts", "bom", "low"];
+  if (!allowed.includes(name)) name = "parts";
   curTab = name;
   document.querySelectorAll("#tabs button").forEach(b => b.classList.toggle("on", b.dataset.tab === name));
   document.querySelectorAll("section.tab").forEach(s => s.classList.toggle("on", s.dataset.tab === name));
   history.replaceState(null, "", name === "parts" ? location.pathname : "#" + name);
   if (name === "bom" && !curBom) loadBoms();
   if (name === "low") loadLow();
+  if (name === "customers") loadCustomers();
 }
 document.querySelectorAll("#tabs button").forEach(b => b.addEventListener("click", () => showTab(b.dataset.tab)));
-showTab(location.hash.slice(1)); loadMeta(); loadParts();
+$("ownerSel").addEventListener("change", () => { ownerSel = $("ownerSel").value; curBom = null; $("bomView").style.display = "none"; $("bomList").style.display = "";
+  refreshAll(); if (curTab === "bom") loadBoms(); });
+(async () => {
+  try { who = await api("/api/kho/whoami"); } catch {}
+  if (!who.role) return showLogin();
+  $("app").style.display = ""; document.body.classList.add(who.role);
+  if (who.role === "customer") $("whoBadge").textContent = "👤 " + who.customer.name;
+  fillOwnerSel();
+  showTab(location.hash.slice(1)); loadMeta(); loadParts();
+})();
 </script>
 </body>
 </html>

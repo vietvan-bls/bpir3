@@ -10,6 +10,8 @@ Khớp dòng BOM với linh kiện trong kho, theo thứ tự: mã LCSC -> mã D
 dấu -) -> giá trị + package. Dòng nào khớp sai thì chọn lại tay trên trang.
 """
 import csv
+import hashlib
+import hmac
 import io
 import json
 import os
@@ -266,6 +268,13 @@ CREATE TABLE IF NOT EXISTS bom_lines (
 CREATE INDEX IF NOT EXISTS bl_bom ON bom_lines (bom_id);
 CREATE TABLE IF NOT EXISTS scanned_labels (label_id TEXT PRIMARY KEY, part_id INTEGER, ts REAL, qty INTEGER, raw TEXT);
 CREATE TABLE IF NOT EXISTS lcsc_cache (code TEXT PRIMARY KEY, ts REAL, data TEXT);
+CREATE TABLE IF NOT EXISTS customers (id INTEGER PRIMARY KEY, name TEXT NOT NULL, phone TEXT DEFAULT '',
+  note TEXT DEFAULT '', created REAL);
+CREATE TABLE IF NOT EXISTS kho_users (id INTEGER PRIMARY KEY, username TEXT UNIQUE NOT NULL COLLATE NOCASE,
+  customer_id INTEGER NOT NULL REFERENCES customers(id) ON DELETE CASCADE,
+  salt TEXT, it INTEGER, hash TEXT, created REAL, last_login REAL);
+CREATE TABLE IF NOT EXISTS kho_sessions (key TEXT PRIMARY KEY,
+  user_id INTEGER NOT NULL REFERENCES kho_users(id) ON DELETE CASCADE, exp REAL);
 """
 
 
@@ -326,8 +335,15 @@ class Kho:
         self.db = sqlite3.connect(DB_FILE, check_same_thread=False)
         self.db.row_factory = sqlite3.Row
         self.db.executescript(SCHEMA)
+        for table in ("parts", "boms"):   # nâng cấp CSDL cũ: thêm chủ sở hữu (0 = của mình, >0 = id khách)
+            cols = [r[1] for r in self.db.execute(f"PRAGMA table_info({table})")]
+            if "owner_id" not in cols:
+                self.db.execute(f"ALTER TABLE {table} ADD COLUMN owner_id INTEGER NOT NULL DEFAULT 0")
+        self.db.execute("CREATE INDEX IF NOT EXISTS parts_owner ON parts (owner_id)")
+        self.db.commit()
         self.lock = threading.RLock()
         self.pending = {}   # token -> (thời điểm, dữ liệu file đã đọc) chờ xác nhận nhập
+        self.fails = {}     # ip -> [số lần sai, khóa tới] (đăng nhập tài khoản khách)
 
     def _backup(self):
         """Sao lưu kho.db mỗi ngày một bản (lúc server khởi động / mỗi lần ghi đầu tiên trong ngày)."""
@@ -357,8 +373,11 @@ class Kho:
             out.setdefault(r["part_id"], []).append(r)
         return out
 
-    def list_parts(self, q="", category="", location="", low=False, limit=200, offset=0, sort="updated"):
+    def list_parts(self, q="", category="", location="", low=False, limit=200, offset=0, sort="updated", owner=None):
+        """owner: None = mọi chủ sở hữu (quản lý), 0 = của mình, >0 = của khách đó."""
         where, args = [], []
+        if owner is not None:
+            where.append("p.owner_id = ?"); args.append(int(owner))
         if q:
             for word in q.split()[:6]:
                 like = f"%{word}%"
@@ -377,7 +396,8 @@ class Kho:
                  "location": "p.location COLLATE NOCASE, p.mpn COLLATE NOCASE",
                  "category": "p.category COLLATE NOCASE, p.value COLLATE NOCASE"}.get(sort, "p.updated DESC")
         total = self._q(f"SELECT COUNT(*) n FROM parts p {w}", args)[0]["n"]
-        items = self._q(f"SELECT * FROM parts p {w} ORDER BY {order} LIMIT ? OFFSET ?",
+        items = self._q(f"SELECT p.*, c.name owner_name FROM parts p LEFT JOIN customers c ON c.id = p.owner_id {w} "
+                        f"ORDER BY {order} LIMIT ? OFFSET ?",
                         args + [max(1, min(int(limit), 1000)), max(0, int(offset))])
         sup = self._suppliers_of([p["id"] for p in items])
         for p in items:
@@ -385,9 +405,10 @@ class Kho:
             p["low"] = p["min_qty"] > 0 and p["qty"] <= p["min_qty"]
         return {"items": items, "total": total}
 
-    def get_part(self, pid):
-        rows = self._q("SELECT * FROM parts WHERE id = ?", (pid,))
-        if not rows:
+    def get_part(self, pid, owner=None):
+        rows = self._q("SELECT p.*, c.name owner_name FROM parts p LEFT JOIN customers c ON c.id = p.owner_id "
+                       "WHERE p.id = ?", (pid,))
+        if not rows or (owner is not None and rows[0]["owner_id"] != int(owner)):
             raise ValueError("Không có linh kiện này")
         p = rows[0]
         p["suppliers"] = self._suppliers_of([pid]).get(pid, [])
@@ -413,6 +434,8 @@ class Kho:
                 vals[f] = v
         if "mpn" in vals:
             vals["mpn_key"] = mpn_key(vals["mpn"])
+        if "owner_id" in d or not d.get("id"):
+            vals["owner_id"] = self._check_owner(d.get("owner_id", 0))
         with self.lock:
             self._backup()
             pid = d.get("id")
@@ -432,6 +455,10 @@ class Kho:
                 cur = self.db.execute(f"INSERT INTO parts ({', '.join(vals)}, created, updated) VALUES "
                                       f"({', '.join('?' * len(vals))}, ?, ?)", list(vals.values()) + [now, now])
                 pid = cur.lastrowid
+                # SQLite có thể dùng lại id của linh kiện đã xóa: dọn dữ liệu sót (nếu có) để không lẫn sang người khác
+                self.db.execute("DELETE FROM stock_log WHERE part_id = ?", (pid,))
+                self.db.execute("DELETE FROM part_suppliers WHERE part_id = ?", (pid,))
+                self.db.execute("UPDATE bom_lines SET part_id = NULL, match = '' WHERE part_id = ?", (pid,))
                 if vals["qty"]:
                     self._log(pid, vals["qty"], vals["qty"], d.get("reason") or "Tạo mới")
             if "suppliers" in d:
@@ -475,41 +502,45 @@ class Kho:
                 self.db.commit()
         return self.get_part(pid)
 
-    def meta(self):
+    def meta(self, owner=None):
+        w, a = ("WHERE owner_id = ?", (int(owner),)) if owner is not None else ("", ())
+        aw = (w + " AND" if w else "WHERE")
         cnt = self._q("SELECT COUNT(*) n, COALESCE(SUM(qty),0) pcs, COALESCE(SUM(qty * COALESCE(price,0)),0) value, "
                       "COALESCE(SUM(CASE WHEN min_qty > 0 AND qty <= min_qty THEN 1 ELSE 0 END),0) low, "
-                      "COALESCE(SUM(CASE WHEN qty <= 0 THEN 1 ELSE 0 END),0) out FROM parts")[0]
+                      f"COALESCE(SUM(CASE WHEN qty <= 0 THEN 1 ELSE 0 END),0) out FROM parts {w}", a)[0]
         return {**cnt,
                 "categories": [r["category"] for r in self._q(
-                    "SELECT category, COUNT(*) n FROM parts WHERE category != '' GROUP BY category ORDER BY n DESC")],
+                    f"SELECT category, COUNT(*) n FROM parts {aw} category != '' GROUP BY category ORDER BY n DESC", a)],
                 "locations": [r["location"] for r in self._q(
-                    "SELECT location FROM parts WHERE location != '' GROUP BY location ORDER BY location COLLATE NOCASE")],
-                "boms": self._q("SELECT COUNT(*) n FROM boms")[0]["n"]}
+                    f"SELECT location FROM parts {aw} location != '' GROUP BY location ORDER BY location COLLATE NOCASE", a)],
+                "boms": self._q(f"SELECT COUNT(*) n FROM boms {w}", a)[0]["n"]}
 
     # ------------------------------------------------------------ tìm linh kiện theo mã
-    def find(self, lcsc="", digikey="", mouser="", mpn="", value="", package=""):
-        """Trả về (part_id, cách khớp) hoặc (None, '')."""
+    def find(self, lcsc="", digikey="", mouser="", mpn="", value="", package="", owner=0):
+        """Trả về (part_id, cách khớp) hoặc (None, ''). Chỉ tìm trong hàng của chủ sở hữu `owner`."""
+        owner = int(owner or 0)
         for sup, sku in (("lcsc", lcsc), ("digikey", digikey), ("mouser", mouser)):
             sku = str(sku or "").strip()
             if sku:
                 r = self._q("SELECT s.part_id FROM part_suppliers s JOIN parts p ON p.id = s.part_id "
-                            "WHERE s.supplier = ? AND s.sku = ? COLLATE NOCASE LIMIT 1",
-                            (sup, sku.upper() if sup == "lcsc" else sku))
+                            "WHERE s.supplier = ? AND s.sku = ? COLLATE NOCASE AND p.owner_id = ? LIMIT 1",
+                            (sup, sku.upper() if sup == "lcsc" else sku, owner))
                 if r:
                     return r[0]["part_id"], sup
         k = mpn_key(mpn)
         if len(k) >= 3:
-            r = self._q("SELECT id FROM parts WHERE mpn_key = ? LIMIT 1", (k,))
+            r = self._q("SELECT id FROM parts WHERE mpn_key = ? AND owner_id = ? LIMIT 1", (k, owner))
             if r:
                 return r[0]["id"], "mpn"
         if len(k) >= 6:   # OCR đọc nhầm O/0, S/5…: so khớp gần đúng
             fk = mpn_fuzzy(k)
-            for row in self._q("SELECT id, mpn_key FROM parts WHERE mpn_key != '' AND length(mpn_key) = ?", (len(k),)):
+            for row in self._q("SELECT id, mpn_key FROM parts WHERE mpn_key != '' AND length(mpn_key) = ? AND owner_id = ?",
+                               (len(k), owner)):
                 if mpn_fuzzy(row["mpn_key"]) == fk:
                     return row["id"], "mpn gần đúng"
         if value and package:
             r = self._q("SELECT id FROM parts WHERE value = ? COLLATE NOCASE AND package = ? COLLATE NOCASE "
-                        "ORDER BY qty DESC LIMIT 1", (value.strip(), package.strip()))
+                        "AND owner_id = ? ORDER BY qty DESC LIMIT 1", (value.strip(), package.strip(), owner))
             if r:
                 return r[0]["id"], "value+package"
         return None, ""
@@ -538,9 +569,10 @@ class Kho:
         m = {f: int(i) for f, i in (mapping or {}).items() if f in FIELD_LABELS and i not in (None, "", -1, "-1")}
         return p[1], parse_rows(p[1]["rows"], m)
 
-    def import_stock(self, token, mapping, mode="add", supplier="", location="", category="", ref=""):
+    def import_stock(self, token, mapping, mode="add", supplier="", location="", category="", ref="", owner=0):
         """Nhập đơn hàng / file kiểm kê. mode: add = cộng thêm, set = đặt đúng số lượng. Linh kiện chưa có thì tạo."""
         info, recs = self._take(token, mapping)
+        owner = self._check_owner(owner)
         created, updated, skipped = 0, 0, []
         with self.lock:
             self._backup()
@@ -548,7 +580,7 @@ class Kho:
                 qty = _int(r.get("qty"), 0)
                 if r.get("supplier_part") and supplier in ("digikey", "mouser") and not r.get(supplier):
                     r[supplier] = r["supplier_part"]
-                pid, _ = self.find(r.get("lcsc"), r.get("digikey"), r.get("mouser"), r.get("mpn"))
+                pid, _ = self.find(r.get("lcsc"), r.get("digikey"), r.get("mouser"), r.get("mpn"), owner=owner)
                 sups = [{"supplier": s, "sku": r[s], "price": r.get("price")} for s in ("lcsc", "digikey", "mouser")
                         if r.get(s)]
                 if r.get("taobao"):
@@ -558,7 +590,8 @@ class Kho:
                         skipped.append(r); continue
                     d = {f: r.get(f, "") for f in ("mpn", "manufacturer", "name", "package", "value")}
                     d.update(category=r.get("category") or category, location=r.get("location") or location,
-                             qty=qty, price=r.get("price"), suppliers=sups, reason=f"Nhập file {info['name']}")
+                             qty=qty, price=r.get("price"), suppliers=sups, reason=f"Nhập file {info['name']}",
+                             owner_id=owner)
                     if r.get("min_qty"):
                         d["min_qty"] = r["min_qty"]
                     self.save_part(d)
@@ -581,22 +614,23 @@ class Kho:
         return {"created": created, "updated": updated, "skipped": len(skipped), "total": len(recs)}
 
     # ------------------------------------------------------------ BOM
-    def bom_create(self, token, mapping, name="", boards=1):
+    def bom_create(self, token, mapping, name="", boards=1, owner=0):
         info, recs = self._take(token, mapping)
+        owner = self._check_owner(owner)
         if not recs:
             raise ValueError("Không đọc được dòng nào trong BOM")
         now = time.time()
         with self.lock:
             self._backup()
-            cur = self.db.execute("INSERT INTO boms (name, created, boards) VALUES (?, ?, ?)",
-                                  ((name or info["name"]).strip()[:120], now, max(1, _int(boards, 1))))
+            cur = self.db.execute("INSERT INTO boms (name, created, boards, owner_id) VALUES (?, ?, ?, ?)",
+                                  ((name or info["name"]).strip()[:120], now, max(1, _int(boards, 1)), owner))
             bid = cur.lastrowid
             for i, r in enumerate(recs, 1):
                 des = r.get("designator", "")
                 qty = _int(r.get("qty"), 0) or (len([x for x in re.split(r"[,;\s]+", des) if x]) if des else 1)
                 dnp = str(r.get("dnp", "")).strip().lower() in ("1", "x", "yes", "true", "dnp", "dnf")
                 pid, how = self.find(r.get("lcsc"), r.get("digikey"), r.get("mouser"), r.get("mpn"),
-                                     r.get("value"), r.get("package"))
+                                     r.get("value"), r.get("package"), owner=owner)
                 self.db.execute(
                     "INSERT INTO bom_lines (bom_id, line, designator, qty, value, package, mpn, manufacturer, name, lcsc, "
                     "digikey, mouser, dnp, part_id, match) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
@@ -607,14 +641,24 @@ class Kho:
             self.pending.pop(token, None)
         return self.bom(bid)
 
-    def boms(self):
-        return self._q("SELECT b.*, COUNT(l.id) lines, SUM(CASE WHEN l.part_id IS NULL AND l.dnp = 0 THEN 1 ELSE 0 END) "
-                       "unmatched FROM boms b LEFT JOIN bom_lines l ON l.bom_id = b.id GROUP BY b.id ORDER BY b.created DESC")
+    def boms(self, owner=None):
+        w, a = ("WHERE b.owner_id = ?", (int(owner),)) if owner is not None else ("", ())
+        return self._q("SELECT b.*, c.name owner_name, COUNT(l.id) lines, "
+                       "SUM(CASE WHEN l.part_id IS NULL AND l.dnp = 0 THEN 1 ELSE 0 END) unmatched "
+                       "FROM boms b LEFT JOIN bom_lines l ON l.bom_id = b.id LEFT JOIN customers c ON c.id = b.owner_id "
+                       f"{w} GROUP BY b.id ORDER BY b.created DESC", a)
 
-    def bom(self, bid, boards=None):
-        b = self._q("SELECT * FROM boms WHERE id = ?", (bid,))
-        if not b:
+    def _bom_owner(self, bid, owner=None):
+        """Chủ sở hữu của BOM; báo lỗi nếu `owner` (khách) không phải chủ."""
+        r = self._q("SELECT owner_id FROM boms WHERE id = ?", (bid,))
+        if not r or (owner is not None and r[0]["owner_id"] != int(owner)):
             raise ValueError("Không có BOM này")
+        return r[0]["owner_id"]
+
+    def bom(self, bid, boards=None, owner=None):
+        self._bom_owner(bid, owner)
+        b = self._q("SELECT b.*, c.name owner_name FROM boms b LEFT JOIN customers c ON c.id = b.owner_id "
+                    "WHERE b.id = ?", (bid,))
         b = b[0]
         n = max(1, _int(boards, b["boards"])) if boards is not None else b["boards"]
         lines = self._q("SELECT l.*, p.mpn p_mpn, p.name p_name, p.value p_value, p.package p_package, p.qty p_qty, "
@@ -659,7 +703,8 @@ class Kho:
             return 0
         return max(0, min(have // need for need, have in per_part.values()))
 
-    def bom_update(self, bid, name=None, boards=None, notes=None):
+    def bom_update(self, bid, name=None, boards=None, notes=None, owner=None):
+        self._bom_owner(bid, owner)
         sets, args = [], []
         for k, v in (("name", name), ("boards", boards), ("notes", notes)):
             if v is not None:
@@ -670,7 +715,13 @@ class Kho:
                 self.db.commit()
         return self.bom(bid)
 
-    def bom_set_line(self, line_id, part_id=None, qty=None, dnp=None):
+    def bom_set_line(self, line_id, part_id=None, qty=None, dnp=None, owner=None):
+        r = self._q("SELECT bom_id FROM bom_lines WHERE id = ?", (line_id,))
+        if not r:
+            raise ValueError("Không có dòng này")
+        bom_owner = self._bom_owner(r[0]["bom_id"], owner)
+        if part_id:   # chỉ được khớp với linh kiện của cùng chủ sở hữu
+            self.get_part(int(part_id), bom_owner)
         with self.lock:
             if part_id is not None:
                 self.db.execute("UPDATE bom_lines SET part_id = ?, match = ? WHERE id = ?",
@@ -685,11 +736,13 @@ class Kho:
             raise ValueError("Không có dòng này")
         return self.bom(r[0]["bom_id"])
 
-    def bom_rematch(self, bid):
+    def bom_rematch(self, bid, owner=None):
         """Khớp lại các dòng chưa khớp (sau khi đã thêm linh kiện vào kho)."""
+        bom_owner = self._bom_owner(bid, owner)
         with self.lock:
             for ln in self._q("SELECT * FROM bom_lines WHERE bom_id = ? AND part_id IS NULL", (bid,)):
-                pid, how = self.find(ln["lcsc"], ln["digikey"], ln["mouser"], ln["mpn"], ln["value"], ln["package"])
+                pid, how = self.find(ln["lcsc"], ln["digikey"], ln["mouser"], ln["mpn"], ln["value"], ln["package"],
+                                     owner=bom_owner)
                 if pid:
                     self.db.execute("UPDATE bom_lines SET part_id = ?, match = ? WHERE id = ?", (pid, how, ln["id"]))
             self.db.commit()
@@ -697,11 +750,13 @@ class Kho:
 
     def bom_add_missing(self, bid):
         """Tạo linh kiện (số lượng 0) cho các dòng chưa có trong kho, để theo dõi / đặt mua."""
+        bom_owner = self._bom_owner(bid)
         made = 0
         for ln in self._q("SELECT * FROM bom_lines WHERE bom_id = ? AND part_id IS NULL AND dnp = 0", (bid,)):
             sups = [{"supplier": s, "sku": ln[s]} for s in ("lcsc", "digikey", "mouser") if ln[s]]
             p = self.save_part({"mpn": ln["mpn"], "manufacturer": ln["manufacturer"], "name": ln["name"],
-                                "value": ln["value"], "package": ln["package"], "qty": 0, "suppliers": sups})
+                                "value": ln["value"], "package": ln["package"], "qty": 0, "suppliers": sups,
+                                "owner_id": bom_owner})
             with self.lock:
                 self.db.execute("UPDATE bom_lines SET part_id = ?, match = 'tạo mới' WHERE id = ?", (p["id"], ln["id"]))
                 self.db.commit()
@@ -724,14 +779,15 @@ class Kho:
                 self.adjust(pid, delta=-need, reason=f"Lắp {n} bo {b['name']}", ref=f"bom:{bid}")
         return self.bom(bid)
 
-    def bom_delete(self, bid):
+    def bom_delete(self, bid, owner=None):
+        self._bom_owner(bid, owner)
         with self.lock:
             self.db.execute("DELETE FROM boms WHERE id = ?", (bid,))
             self.db.commit()
 
-    def bom_shortage_csv(self, bid, boards=None, supplier="lcsc"):
+    def bom_shortage_csv(self, bid, boards=None, supplier="lcsc", owner=None):
         """CSV linh kiện cần mua. supplier=lcsc: định dạng dán vào BOM Tool / giỏ hàng LCSC (mã, số lượng)."""
-        b = self.bom(bid, boards)
+        b = self.bom(bid, boards, owner)
         out = io.StringIO()
         w = csv.writer(out)
         sups = self._suppliers_of(list({ln["part_id"] for ln in b["lines"] if ln["part_id"]}))
@@ -753,18 +809,20 @@ class Kho:
         return out.getvalue()
 
     # ------------------------------------------------------------ xuất toàn bộ kho
-    def export_csv(self):
+    def export_csv(self, owner=None):
         out = io.StringIO()
         w = csv.writer(out)
-        w.writerow(["ID", "MPN", "Manufacturer", "Description", "Category", "Value", "Package", "Location", "Quantity",
+        w.writerow(["ID", "Owner", "MPN", "Manufacturer", "Description", "Category", "Value", "Package", "Location", "Quantity",
                     "Min Qty", "Unit Price", "LCSC", "Digi-Key", "Mouser", "Taobao", "Datasheet", "Notes"])
-        parts = self._q("SELECT * FROM parts ORDER BY category, value, mpn")
+        wh, a = ("WHERE p.owner_id = ?", (int(owner),)) if owner is not None else ("", ())
+        parts = self._q("SELECT p.*, c.name owner_name FROM parts p LEFT JOIN customers c ON c.id = p.owner_id "
+                        f"{wh} ORDER BY p.owner_id, p.category, p.value, p.mpn", a)
         sups = self._suppliers_of([p["id"] for p in parts])
         for p in parts:
             c = {}
             for s in sups.get(p["id"], []):
                 c.setdefault(s["supplier"], s["url"] if s["supplier"] == "taobao" else s["sku"])
-            w.writerow([p["id"], p["mpn"], p["manufacturer"], p["name"], p["category"], p["value"], p["package"],
+            w.writerow([p["id"], p["owner_name"] or "Của tôi", p["mpn"], p["manufacturer"], p["name"], p["category"], p["value"], p["package"],
                         p["location"], p["qty"], p["min_qty"], p["price"] if p["price"] is not None else "",
                         c.get("lcsc", ""), c.get("digikey", ""), c.get("mouser", ""), c.get("taobao", ""),
                         p["datasheet"], p["notes"]])
@@ -815,16 +873,17 @@ def lcsc_info(self, code, refresh=False):
     return info
 
 
-def scan(self, code):
-    """Đọc mã quét -> linh kiện khớp trong kho (nếu có), nhãn đã nhập chưa, gợi ý thông tin từ LCSC."""
+def scan(self, code, owner=0):
+    """Đọc mã quét -> linh kiện khớp trong kho của `owner` (nếu có), nhãn đã nhập chưa, gợi ý thông tin từ LCSC."""
+    owner = self._check_owner(owner)
     lab = parse_label(code)
     res = {"label": lab, "part": None, "already": None, "lcsc_info": None, "lcsc_error": "", "results": []}
     if lab["query"]:
-        res["results"] = self.list_parts(lab["query"], limit=20)["items"]
+        res["results"] = self.list_parts(lab["query"], limit=20, owner=owner)["items"]
         if len(res["results"]) == 1:
             res["part"] = res["results"][0]
         return res
-    pid, how = self.find(lab["lcsc"], lab["digikey"], lab["mouser"], lab["mpn"])
+    pid, how = self.find(lab["lcsc"], lab["digikey"], lab["mouser"], lab["mpn"], owner=owner)
     if pid:
         res["part"], res["match"] = self.get_part(pid), how
     if lab["label_id"]:
@@ -838,26 +897,27 @@ def scan(self, code):
     return res
 
 
-def scan_apply(self, code, action, qty=None, part_id=None, fields=None):
+def scan_apply(self, code, action, qty=None, part_id=None, fields=None, owner=0):
     """action: add = cộng số lượng nhãn vào linh kiện (part_id hoặc tự khớp); create = tạo linh kiện mới rồi nhập."""
     lab = parse_label(code)
+    owner = self._check_owner(owner)
     n = _int(qty, lab["qty"]) if qty not in (None, "") else lab["qty"]
     ref = lab["order"] or ""
     sups = [{"supplier": s, "sku": lab[s]} for s in ("lcsc", "digikey", "mouser") if lab[s]]
     with self.lock:
         if action == "create":
-            d = {"mpn": lab["mpn"], "qty": 0, "suppliers": sups}
+            d = {"mpn": lab["mpn"], "qty": 0, "suppliers": sups, "owner_id": owner}
             if lab["lcsc"]:
                 try:
                     d.update(self.lcsc_info(lab["lcsc"]))
                 except Exception:  # noqa: BLE001
                     pass
             d.update({k: v for k, v in (fields or {}).items() if k in PART_FIELDS and v not in (None, "")})
-            d["qty"] = 0
+            d["qty"], d["owner_id"] = 0, owner
             part_id = self.save_part(d)["id"]
         else:
             if not part_id:
-                part_id, _ = self.find(lab["lcsc"], lab["digikey"], lab["mouser"], lab["mpn"])
+                part_id, _ = self.find(lab["lcsc"], lab["digikey"], lab["mouser"], lab["mpn"], owner=owner)
             if not part_id:
                 raise ValueError("Không tìm thấy linh kiện trong kho: chọn “Tạo mới”")
             p = self.get_part(part_id)
@@ -891,3 +951,142 @@ Kho.lcsc_info = lcsc_info
 Kho.scan = scan
 Kho.scan_apply = scan_apply
 Kho.fill_from_lcsc = fill_from_lcsc
+
+
+# ------------------------------------------------------------------ khách + tài khoản khách
+PBKDF2_ITER, SESSION_DAYS, MAX_FAILS, LOCK_SECONDS = 200_000, 30, 5, 300
+KHO_COOKIE = "bpi_kho"
+
+
+def _pw_hash(pw, salt, it):
+    return hashlib.pbkdf2_hmac("sha256", pw.encode(), bytes.fromhex(salt), it).hex()
+
+
+def _check_owner(self, owner):
+    """0 = của mình; >0 phải là id khách có thật."""
+    o = _int(owner, 0)
+    if o and not self._q("SELECT 1 FROM customers WHERE id = ?", (o,)):
+        raise ValueError("Không có khách này")
+    return o
+
+
+def customers(self):
+    rows = self._q("SELECT c.*, (SELECT COUNT(*) FROM parts p WHERE p.owner_id = c.id) parts, "
+                   "(SELECT COALESCE(SUM(qty),0) FROM parts p WHERE p.owner_id = c.id) pcs, "
+                   "(SELECT COUNT(*) FROM boms b WHERE b.owner_id = c.id) boms FROM customers c ORDER BY c.name COLLATE NOCASE")
+    users = {}
+    for u in self._q("SELECT id, username, customer_id, created, last_login FROM kho_users ORDER BY username"):
+        users.setdefault(u["customer_id"], []).append(u)
+    for c in rows:
+        c["users"] = users.get(c["id"], [])
+    return rows
+
+
+def save_customer(self, d):
+    name = str(d.get("name", "")).strip()[:100]
+    if not name:
+        raise ValueError("Cần tên khách")
+    vals = (name, str(d.get("phone", "")).strip()[:50], str(d.get("note", "")).strip()[:300])
+    with self.lock:
+        if d.get("id"):
+            self._check_owner(d["id"])
+            self.db.execute("UPDATE customers SET name = ?, phone = ?, note = ? WHERE id = ?", vals + (int(d["id"]),))
+            cid = int(d["id"])
+        else:
+            cid = self.db.execute("INSERT INTO customers (name, phone, note, created) VALUES (?, ?, ?, ?)",
+                                  vals + (time.time(),)).lastrowid
+        self.db.commit()
+    return next(c for c in self.customers() if c["id"] == cid)
+
+
+def delete_customer(self, cid):
+    cid = self._check_owner(cid)
+    n = self._q("SELECT (SELECT COUNT(*) FROM parts WHERE owner_id = ?) + (SELECT COUNT(*) FROM boms WHERE owner_id = ?) n",
+                (cid, cid))[0]["n"]
+    if n:
+        raise ValueError("Khách còn linh kiện / BOM trong kho: chuyển hoặc xóa trước")
+    with self.lock:
+        self.db.execute("DELETE FROM customers WHERE id = ?", (cid,))
+        self.db.commit()
+
+
+def save_user(self, customer_id, username, password=""):
+    """Tạo tài khoản khách (hoặc đặt lại mật khẩu nếu đã có). Mật khẩu trống -> tự tạo, trả về 1 lần."""
+    cid = self._check_owner(customer_id)
+    if not cid:
+        raise ValueError("Chọn khách cho tài khoản")
+    username = str(username or "").strip().lower()
+    if not re.fullmatch(r"[a-z0-9][a-z0-9._-]{2,31}", username):
+        raise ValueError("Tên đăng nhập: 3–32 ký tự chữ thường, số, . _ -")
+    pw = str(password or "") or secrets.token_urlsafe(9)
+    if len(pw) < 6:
+        raise ValueError("Mật khẩu ít nhất 6 ký tự")
+    salt = secrets.token_hex(16)
+    with self.lock:
+        row = self._q("SELECT id, customer_id FROM kho_users WHERE username = ?", (username,))
+        if row:
+            if row[0]["customer_id"] != cid:
+                raise ValueError("Tên đăng nhập đã dùng cho khách khác")
+            self.db.execute("UPDATE kho_users SET salt = ?, it = ?, hash = ? WHERE id = ?",
+                            (salt, PBKDF2_ITER, _pw_hash(pw, salt, PBKDF2_ITER), row[0]["id"]))
+            self.db.execute("DELETE FROM kho_sessions WHERE user_id = ?", (row[0]["id"],))   # đăng xuất máy cũ
+        else:
+            self.db.execute("INSERT INTO kho_users (username, customer_id, salt, it, hash, created) VALUES (?,?,?,?,?,?)",
+                            (username, cid, salt, PBKDF2_ITER, _pw_hash(pw, salt, PBKDF2_ITER), time.time()))
+        self.db.commit()
+    return {"username": username, "password": pw, "customer_id": cid}
+
+
+def delete_user(self, username):
+    with self.lock:
+        self.db.execute("DELETE FROM kho_users WHERE username = ?", (str(username).strip().lower(),))
+        self.db.commit()
+
+
+def _skey(token):
+    return hashlib.sha256(token.encode()).hexdigest()
+
+
+def login(self, ip, username, password):
+    now = time.time()
+    with self.lock:
+        cnt, until = self.fails.get(ip, [0, 0])
+        if until > now:
+            raise PermissionError(f"Sai quá nhiều lần, thử lại sau {int(until - now)} giây")
+    u = self._q("SELECT * FROM kho_users WHERE username = ?", (str(username or "").strip().lower(),))
+    if u and hmac.compare_digest(_pw_hash(str(password or ""), u[0]["salt"], u[0]["it"]), u[0]["hash"]):
+        token = secrets.token_urlsafe(32)
+        with self.lock:
+            self.fails.pop(ip, None)
+            self.db.execute("DELETE FROM kho_sessions WHERE exp < ?", (now,))
+            self.db.execute("INSERT INTO kho_sessions VALUES (?, ?, ?)", (_skey(token), u[0]["id"], now + SESSION_DAYS * 86400))
+            self.db.execute("UPDATE kho_users SET last_login = ? WHERE id = ?", (now, u[0]["id"]))
+            self.db.commit()
+        return token
+    time.sleep(1)
+    with self.lock:
+        cnt += 1
+        self.fails[ip] = [0, now + LOCK_SECONDS] if cnt >= MAX_FAILS else [cnt, 0]
+        left = MAX_FAILS - cnt
+    raise PermissionError("Sai tên đăng nhập hoặc mật khẩu" + (f", còn {left} lần thử" if left > 0 else
+                                                              f", bị khóa {LOCK_SECONDS // 60} phút"))
+
+
+def session_user(self, token):
+    """Tài khoản khách của phiên (None nếu không hợp lệ)."""
+    if not token:
+        return None
+    r = self._q("SELECT u.id, u.username, u.customer_id, c.name customer_name FROM kho_sessions s "
+                "JOIN kho_users u ON u.id = s.user_id JOIN customers c ON c.id = u.customer_id "
+                "WHERE s.key = ? AND s.exp > ?", (_skey(token), time.time()))
+    return r[0] if r else None
+
+
+def logout(self, token):
+    with self.lock:
+        self.db.execute("DELETE FROM kho_sessions WHERE key = ?", (_skey(token or ""),))
+        self.db.commit()
+
+
+for _f in (_check_owner, customers, save_customer, delete_customer, save_user, delete_user, login, session_user, logout):
+    setattr(Kho, _f.__name__, _f)

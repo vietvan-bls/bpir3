@@ -267,6 +267,14 @@ Mở: `http://192.168.2.1:8080/kho` / `https://bpi-r3.tail24dd60.ts.net/kho`, ho
   Thông tin LCSC lấy từ API của trang lcsc.com (không chính thức, có thể đổi), lưu đệm 30 ngày; nút “Điền từ LCSC”
   ở chi tiết linh kiện để cập nhật.
 - **⚠️ Sắp hết**: linh kiện có “Cảnh báo khi ≤” > 0 và số lượng ≤ mức đó; hiện số đếm ở đầu trang và trong app.
+- **👥 Nhiều người dùng / cất hàng cho khách**: mỗi linh kiện và BOM có chủ sở hữu (“Của tôi” hoặc một khách);
+  cùng MPN của bạn và của khách là 2 dòng riêng. Quản lý (đăng nhập quản trị board) chọn **“Kho của”** ở đầu trang
+  (Tất cả / Của tôi / từng khách); thêm linh kiện, nhập đơn, quét nhãn, thêm BOM đều vào kho đang chọn (đổi được trong hộp thoại).
+  Tab **👥 Khách**: thêm / sửa / xóa khách (không xóa được khi còn hàng), tạo tài khoản cho khách (mật khẩu tự tạo hoặc
+  tự đặt, hiện 1 lần), đặt lại mật khẩu (đăng xuất máy cũ), xóa tài khoản.
+  **Khách** đăng nhập tại `/kho` bằng tài khoản được cấp (cookie `bpi_kho`, phiên 30 ngày, sai 5 lần khóa 5 phút):
+  chỉ thấy linh kiện, lịch sử, BOM của mình; tự tải BOM để xem thiếu gì (chỉ khớp với hàng của họ); không sửa số lượng,
+  không nhập hàng, không vào được trang quản trị board / IoT / LuCI.
 - Dữ liệu: SQLite `/mnt/data/kho/kho.db`, tự sao lưu mỗi ngày vào `/mnt/data/kho/backup/` (giữ 14 bản).
   Xuất toàn bộ kho ra CSV (mở bằng Excel): `/api/kho/export.csv`.
 - Chỉ dùng thư viện chuẩn của Python (đọc `.xlsx` bằng `zipfile` + XML), không cần cài thêm gói.

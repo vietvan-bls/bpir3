@@ -75,6 +75,13 @@ Kho linh kiện (kho.py, trang /kho), cần quyền quản trị:
                                  nhãn đã nhập chưa, thông tin LCSC gợi ý
   POST /api/kho/scan/apply {code, action: add|create, qty?, part_id?, fields?}   nhập số lượng của nhãn
   GET  /api/kho/lcsc?code=C123   thông tin sản phẩm từ LCSC (lưu đệm)
+  Nhiều người dùng: mỗi linh kiện / BOM có chủ sở hữu (owner_id: 0 = của mình, N = khách N).
+  Quản lý (quản trị board) xem mọi thứ, lọc bằng ?owner=all|0|N, tạo mới với "owner_id".
+  Khách đăng nhập bằng tài khoản kho (cookie bpi_kho): chỉ thấy hàng + BOM của mình, chỉ xem / kiểm tra BOM.
+  GET  /api/kho/whoami           {role: admin|customer|null, customer?, customers?}
+  POST /api/kho/login {username, password}   POST /api/kho/logout
+  GET  /api/kho/customers        POST /api/kho/customers {action: save|delete, id?, name, phone?, note?}
+  POST /api/kho/users {action: save|delete, customer_id, username, password?}   (mật khẩu trống = tự tạo)
   POST /api/kho/part/lcsc-fill {id, overwrite?}   điền thông tin còn trống từ LCSC
 
 Mọi POST bắt buộc có header "X-BPI: 1". Trình duyệt không cho trang web lạ tự gắn header này
@@ -1044,7 +1051,7 @@ class Handler(BaseHTTPRequestHandler):
         # Không gửi cookie phiên của web panel sang LuCI.
         if "Cookie" in hdrs:
             hdrs["Cookie"] = "; ".join(c for c in hdrs["Cookie"].split("; ")
-                                       if not c.startswith((COOKIE + "=", IOT_AUTH.COOKIE + "=")))
+                                       if not c.startswith((COOKIE + "=", IOT_AUTH.COOKIE + "=", "bpi_kho=")))
         hdrs["Host"] = "127.0.0.1"
         hdrs["X-Forwarded-For"] = self.client_ip()
         try:
@@ -1139,45 +1146,94 @@ class Handler(BaseHTTPRequestHandler):
     def need_login(self):
         self._send(401, {"error": "Cần đăng nhập", "login": True})
 
-    def kho_get(self, path, q):
+    # ------------------------------------------------------------ kho: quyền
+    def kho_ctx(self):
+        """Quản lý (quản trị board): mọi chủ sở hữu. Khách (tài khoản kho): chỉ hàng của mình, chỉ xem + BOM."""
+        if self.is_admin():
+            return {"role": "admin", "scope": None}
+        if KHO is not None:
+            u = KHO.session_user(self.session_token(_kho.KHO_COOKIE))
+            if u:
+                return {"role": "customer", "scope": u["customer_id"], "user": u}
+        return None
+
+    @staticmethod
+    def kho_owner_param(v):
+        """owner trong query của quản lý: '' / 'all' = mọi chủ sở hữu, 0 = của mình, N = khách N."""
+        v = str(v or "").strip()
+        return None if v in ("", "all") else int(v)
+
+    def kho_get(self, path, q, ctx):
         if KHO is None:
             return self._send(503, {"error": "Kho chưa bật (xem log server)"})
         g = lambda k, d="": q.get(k, [d])[0]  # noqa: E731
+        admin = ctx["role"] == "admin"
+        # phạm vi đọc: khách luôn bị giới hạn vào hàng của mình, quản lý chọn bằng ?owner=
+        scope = self.kho_owner_param(g("owner")) if admin else ctx["scope"]
+        mine = None if admin else ctx["scope"]
         if path == "/api/kho/meta":
-            return self._send(200, KHO.meta())
+            return self._send(200, KHO.meta(scope))
         if path == "/api/kho/parts":
             return self._send(200, KHO.list_parts(g("q"), g("category"), g("location"), g("low") == "1",
                                                   int(g("limit", "200") or 200), int(g("offset", "0") or 0),
-                                                  g("sort", "updated")))
+                                                  g("sort", "updated"), owner=scope))
         if path == "/api/kho/part":
-            return self._send(200, KHO.get_part(int(g("id", "0") or 0)))
+            return self._send(200, KHO.get_part(int(g("id", "0") or 0), mine))
         if path == "/api/kho/boms":
-            return self._send(200, KHO.boms())
-        if path == "/api/kho/lcsc":
-            return self._send(200, KHO.lcsc_info(g("code")))
+            return self._send(200, KHO.boms(scope))
         if path == "/api/kho/bom":
-            return self._send(200, KHO.bom(int(g("id", "0") or 0), g("boards") or None))
+            return self._send(200, KHO.bom(int(g("id", "0") or 0), g("boards") or None, mine))
         if path == "/api/kho/bom/shortage.csv":
             bid = int(g("id", "0") or 0)
-            csv_text = KHO.bom_shortage_csv(bid, g("boards") or None, g("supplier", "lcsc"))
+            csv_text = KHO.bom_shortage_csv(bid, g("boards") or None, g("supplier", "lcsc"), mine)
             return self._send(200, "\ufeff" + csv_text, "text/csv", headers={
                 "Content-Disposition": f'attachment; filename="thieu-bom-{bid}.csv"'})
         if path == "/api/kho/export.csv":
-            return self._send(200, KHO.export_csv(), "text/csv", headers={
+            return self._send(200, KHO.export_csv(scope), "text/csv", headers={
                 "Content-Disposition": f'attachment; filename="kho-{time.strftime("%Y%m%d")}.csv"'})
+        if not admin:
+            raise PermissionError("Tài khoản khách chỉ được xem")
+        if path == "/api/kho/lcsc":
+            return self._send(200, KHO.lcsc_info(g("code")))
+        if path == "/api/kho/customers":
+            return self._send(200, KHO.customers())
         return self._send(404, {"error": "not found"})
 
-    def kho_post(self, path, body):
+    # khách được dùng các thao tác này (chỉ trên BOM của mình)
+    KHO_CUSTOMER_POST = {"/api/kho/bom/create", "/api/kho/bom/update", "/api/kho/bom/line", "/api/kho/bom/rematch",
+                         "/api/kho/bom/delete"}
+
+    def kho_post(self, path, body, ctx):
         if KHO is None:
             raise OSError("Kho chưa bật (xem log server)")
         i = lambda k: int(body.get(k) or 0)  # noqa: E731
+        admin = ctx["role"] == "admin"
+        if not admin and path not in self.KHO_CUSTOMER_POST:
+            raise PermissionError("Tài khoản khách chỉ được xem và kiểm tra BOM")
+        own = None if admin else ctx["scope"]                              # kiểm tra quyền trên BOM
+        new_owner = body.get("owner_id", 0) if admin else ctx["scope"]     # chủ sở hữu của dữ liệu tạo mới
+        # ---- BOM (quản lý + khách)
+        if path == "/api/kho/bom/create":
+            return self._send(200, KHO.bom_create(body.get("token", ""), body.get("mapping"), body.get("name", ""),
+                                                  body.get("boards", 1), owner=new_owner))
+        if path == "/api/kho/bom/update":
+            return self._send(200, KHO.bom_update(i("id"), body.get("name"), body.get("boards"), body.get("notes"), own))
+        if path == "/api/kho/bom/line":
+            return self._send(200, KHO.bom_set_line(i("line_id"), body.get("part_id"), body.get("qty"),
+                                                    body.get("dnp"), own))
+        if path == "/api/kho/bom/rematch":
+            return self._send(200, KHO.bom_rematch(i("id"), own))
+        if path == "/api/kho/bom/delete":
+            KHO.bom_delete(i("id"), own)
+            return self._send(200, {"ok": True})
+        # ---- chỉ quản lý
         if path == "/api/kho/part":
             return self._send(200, KHO.save_part(body))
         if path == "/api/kho/scan":
-            return self._send(200, KHO.scan(body.get("code", "")))
+            return self._send(200, KHO.scan(body.get("code", ""), owner=new_owner))
         if path == "/api/kho/scan/apply":
             return self._send(200, KHO.scan_apply(body.get("code", ""), body.get("action", "add"), body.get("qty"),
-                                                  body.get("part_id"), body.get("fields")))
+                                                  body.get("part_id"), body.get("fields"), owner=new_owner))
         if path == "/api/kho/part/lcsc-fill":
             return self._send(200, KHO.fill_from_lcsc(i("id"), bool(body.get("overwrite"))))
         if path == "/api/kho/part/delete":
@@ -1189,23 +1245,45 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/api/kho/import":
             return self._send(200, KHO.import_stock(body.get("token", ""), body.get("mapping"), body.get("mode", "add"),
                                                     body.get("supplier", ""), body.get("location", ""),
-                                                    body.get("category", ""), body.get("ref", "")))
-        if path == "/api/kho/bom/create":
-            return self._send(200, KHO.bom_create(body.get("token", ""), body.get("mapping"), body.get("name", ""),
-                                                  body.get("boards", 1)))
-        if path == "/api/kho/bom/update":
-            return self._send(200, KHO.bom_update(i("id"), body.get("name"), body.get("boards"), body.get("notes")))
-        if path == "/api/kho/bom/line":
-            return self._send(200, KHO.bom_set_line(i("line_id"), body.get("part_id"), body.get("qty"), body.get("dnp")))
-        if path == "/api/kho/bom/rematch":
-            return self._send(200, KHO.bom_rematch(i("id")))
+                                                    body.get("category", ""), body.get("ref", ""), owner=new_owner))
         if path == "/api/kho/bom/add-missing":
             return self._send(200, KHO.bom_add_missing(i("id")))
         if path == "/api/kho/bom/consume":
             return self._send(200, KHO.bom_consume(i("id"), body.get("boards")))
-        if path == "/api/kho/bom/delete":
-            KHO.bom_delete(i("id"))
-            return self._send(200, {"ok": True})
+        if path == "/api/kho/customers":          # {action: save|delete, id?, name, phone, note}
+            if body.get("action") == "delete":
+                KHO.delete_customer(i("id"))
+                return self._send(200, {"ok": True})
+            return self._send(200, KHO.save_customer(body))
+        if path == "/api/kho/users":              # {action: save|delete, customer_id, username, password?}
+            if body.get("action") == "delete":
+                KHO.delete_user(body.get("username", ""))
+                return self._send(200, {"ok": True})
+            return self._send(200, KHO.save_user(body.get("customer_id"), body.get("username"), body.get("password", "")))
+        return self._send(404, {"error": "not found"})
+
+    def kho_public(self, path, body):
+        """Đăng nhập / đăng xuất tài khoản khách của kho, và cho trang biết mình là ai."""
+        if path == "/api/kho/whoami":
+            ctx = self.kho_ctx()
+            if not ctx:
+                return self._send(200, {"role": None})
+            out = {"role": ctx["role"]}
+            if ctx["role"] == "customer":
+                out.update(username=ctx["user"]["username"],
+                           customer={"id": ctx["scope"], "name": ctx["user"]["customer_name"]})
+            elif KHO is not None:
+                out["customers"] = [{"id": c["id"], "name": c["name"]} for c in KHO.customers()]
+            return self._send(200, out)
+        if KHO is None:
+            raise OSError("Kho chưa bật")
+        if path == "/api/kho/login":
+            token = KHO.login(self.client_ip(), body.get("username", ""), body.get("password", ""))
+            return self._send(200, {"ok": True}, headers={
+                "Set-Cookie": self.cookie_header(token, _kho.SESSION_DAYS * 86400, _kho.KHO_COOKIE)})
+        if path == "/api/kho/logout":
+            KHO.logout(self.session_token(_kho.KHO_COOKIE))
+            return self._send(200, {"ok": True}, headers={"Set-Cookie": self.cookie_header("", 0, _kho.KHO_COOKIE)})
         return self._send(404, {"error": "not found"})
 
     def kho_upload(self, url, length):
@@ -1213,16 +1291,18 @@ class Handler(BaseHTTPRequestHandler):
         if self.headers.get("X-BPI") != "1":
             self.close_connection = True
             return self._send(400, {"error": "thiếu header X-BPI"})
-        if not self.is_admin():
+        ctx = self.kho_ctx()
+        q = parse_qs(url.query)
+        kind = q.get("kind", ["stock"])[0]
+        if not ctx or (ctx["role"] != "admin" and kind != "bom"):
             self.close_connection = True
-            return self.need_login()
+            return self.need_login() if not ctx else self._send(403, {"error": "Tài khoản khách chỉ được tải BOM"})
         if KHO is None or length > _kho.MAX_UPLOAD:
             self.close_connection = True
             return self._send(413 if KHO else 503, {"error": "File quá lớn (tối đa 5 MB)" if KHO else "Kho chưa bật"})
         data = self.rfile.read(length) if length else b""
-        q = parse_qs(url.query)
         try:
-            return self._send(200, KHO.preview(q.get("name", ["file.csv"])[0], data, q.get("kind", ["stock"])[0]))
+            return self._send(200, KHO.preview(q.get("name", ["file.csv"])[0], data, kind))
         except ValueError as e:
             return self._send(400, {"error": str(e)})
 
@@ -1289,16 +1369,19 @@ class Handler(BaseHTTPRequestHandler):
         path, q = url.path, parse_qs(url.query)
         if path.startswith(LUCI_PREFIXES):
             return self.proxy_luci()
-        if path in ("/kho", "/kho.html"):
-            if not self.is_admin():   # trang kho chỉ cho quản trị viên: chưa đăng nhập thì về trang đăng nhập
-                return self._send(302, "", "text/plain", headers={"Location": "/"})
+        if path in ("/kho", "/kho.html"):   # trang tự hiện màn hình đăng nhập (quản lý hoặc tài khoản khách)
             with open(os.path.join(HERE, "kho.html"), "rb") as f:
                 return self._send(200, f.read(), "text/html")
         if path.startswith("/api/kho/"):
-            if not self.is_admin():
-                return self.need_login()
             try:
-                return self.kho_get(path, q)
+                if path == "/api/kho/whoami":
+                    return self.kho_public(path, {})
+                ctx = self.kho_ctx()
+                if not ctx:
+                    return self.need_login()
+                return self.kho_get(path, q, ctx)
+            except PermissionError as e:
+                return self._send(403, {"error": str(e)})
             except ValueError as e:
                 return self._send(400, {"error": str(e)})
             except OSError as e:
@@ -1406,14 +1489,19 @@ class Handler(BaseHTTPRequestHandler):
         try:
             if url.path.startswith("/api/iot/"):
                 return self.iot_post(url.path, body)
+            if url.path in ("/api/kho/login", "/api/kho/logout"):
+                return self.kho_public(url.path, body)
+            if url.path.startswith("/api/kho/"):
+                ctx = self.kho_ctx()
+                if not ctx:
+                    return self.need_login()
+                return self.kho_post(url.path, body, ctx)
             if self.path == "/api/login":
                 token = try_login(self.client_ip(), str(body.get("password", "")))
                 return self._send(200, {"ok": True},
                                   headers={"Set-Cookie": self.cookie_header(token, SESSION_DAYS * 86400)})
             if not self.is_admin():
                 return self.need_login()
-            if url.path.startswith("/api/kho/"):
-                return self.kho_post(url.path, body)
             if self.path == "/api/logout":
                 end_session(self.session_token())
                 return self._send(200, {"ok": True}, headers={"Set-Cookie": self.cookie_header("", 0)})
