@@ -477,6 +477,16 @@ BPI_SSH=b fpga/flash.sh fpga/tangnano4k/build/hello.fs tangnano4k -f   # ghi fla
   Cortex-M3 (`emcu-*.v`), HDMI (`DVI/`), PLL.
 - OpenOCD (ST-Link) vẫn chạy song song được vì nó không dùng cáp FTDI.
 
+
+### Cổng serial USB (CH340…) cho ESP / UART
+
+- Đã cài `kmod-usb-serial-ch341` (adapter WCH `1a86:7522` → `/dev/ttyUSB0`).
+- `tools/rfc2217-server.py`: chia sẻ `/dev/ttyUSB0` qua RFC2217 (cả DTR/RTS) cho `esptool`/pyserial ở máy khác. Trên board:
+  pyserial thuần Python chép ở `/mnt/data/pylib`, script ở `/mnt/data/esp/`. Chạy kèm đường hầm SSH:
+  `ssh -L 4000:127.0.0.1:4000 … 'PYTHONPATH=/mnt/data/pylib python3 /mnt/data/esp/rfc2217-server.py /dev/ttyUSB0 4000'`,
+  rồi `esptool --port rfc2217://127.0.0.1:4000 chip-id`. Lần thử ESP8684 đầu tiên chip không gửi ra byte nào → kiểm tra dây TX/RX/GND/nguồn
+  và vào chế độ nạp (giữ GPIO9 xuống GND rồi reset).
+
 ## Truy cập từ Internet (Cloudflare quick tunnel)
 
 Dịch vụ `cftunnel` ([server/cftunnel.init](server/cftunnel.init)) chạy `cloudflared` để đưa cổng 8080
