@@ -14,6 +14,8 @@ class _ConnectScreenState extends State<ConnectScreen> {
   final _pub = TextEditingController();
   final _lan = TextEditingController();
   final _pw = TextEditingController();
+  final _user = TextEditingController();
+  bool _asCustomer = false;   // đăng nhập tài khoản kho (khách) thay vì quản trị
   bool _busy = false;
   bool _tried = false;
   String? _err;
@@ -52,7 +54,12 @@ class _ConnectScreenState extends State<ConnectScreen> {
       _err = null;
     });
     try {
-      await api.login(_pw.text);
+      if (_asCustomer) {
+        await api.khoLogin(_user.text.trim(), _pw.text);
+        if (!api.isKhoCustomer && mounted) setState(() => _err = 'Đăng nhập không thành công');
+      } else {
+        await api.login(_pw.text);
+      }
       _pw.clear();
     } catch (e) {
       if (mounted) setState(() => _err = '$e');
@@ -119,7 +126,7 @@ class _ConnectScreenState extends State<ConnectScreen> {
                       child: ListTile(
                         leading: const Icon(Icons.public),
                         title: Text(api.base, style: t.textTheme.bodySmall),
-                        subtitle: const Text('Đang vào qua Internet: cần mật khẩu'),
+                        subtitle: const Text('Cần đăng nhập'),
                         trailing: IconButton(
                           icon: const Icon(Icons.edit),
                           tooltip: 'Đổi địa chỉ',
@@ -128,10 +135,35 @@ class _ConnectScreenState extends State<ConnectScreen> {
                       ),
                     ),
                     const SizedBox(height: 16),
-                    if (api.who['password_set'] == false)
+                    SegmentedButton<bool>(
+                      segments: const [
+                        ButtonSegment(value: false, icon: Icon(Icons.admin_panel_settings), label: Text('Quản trị')),
+                        ButtonSegment(value: true, icon: Icon(Icons.inventory_2), label: Text('Khách kho')),
+                      ],
+                      selected: {_asCustomer},
+                      onSelectionChanged: (v) => setState(() {
+                        _asCustomer = v.first;
+                        _err = null;
+                      }),
+                    ),
+                    const SizedBox(height: 12),
+                    if (!_asCustomer && api.who['password_set'] == false)
                       const Text(
                           'Chủ board chưa đặt mật khẩu truy cập từ xa. Hãy kết nối bằng địa chỉ trong mạng và đặt mật khẩu ở mục Hệ thống.')
                     else ...[
+                      if (_asCustomer) ...[
+                        TextField(
+                          controller: _user,
+                          autocorrect: false,
+                          textCapitalization: TextCapitalization.none,
+                          decoration: const InputDecoration(
+                            labelText: 'Tên đăng nhập kho',
+                            border: OutlineInputBorder(),
+                            prefixIcon: Icon(Icons.person),
+                          ),
+                        ),
+                        const SizedBox(height: 10),
+                      ],
                       TextField(
                         controller: _pw,
                         obscureText: true,

@@ -91,7 +91,7 @@ class _KhoScreenState extends State<KhoScreen> {
 
   Future<void> _loadMeta() async {
     try {
-      final m = await api.get('/api/kho/meta') as Map;
+      final m = await api.get('/api/kho/meta?${api.ownerQuery}') as Map;
       if (mounted) setState(() => _meta = m);
     } catch (_) {}
   }
@@ -105,6 +105,7 @@ class _KhoScreenState extends State<KhoScreen> {
         'sort': _lowOnly ? 'qty' : 'updated',
         'limit': '60',
         'offset': '${more ? _items.length : 0}',
+        if (api.isAdmin) 'owner': api.khoOwner,
       }).query;
       final r = await api.get('/api/kho/parts?$q') as Map;
       if (!mounted) return;
@@ -131,13 +132,42 @@ class _KhoScreenState extends State<KhoScreen> {
     final m = _meta;
     final t = Theme.of(context);
     final low = (m?['low'] as num?) ?? 0;
+    final ap = ApiScope.of(context);
+    final admin = ap.isAdmin;
     return Scaffold(
-      floatingActionButton: FloatingActionButton.extended(
-        onPressed: () => _open(const ScanScreen()),
-        icon: const Icon(Icons.qr_code_scanner),
-        label: const Text('Quét'),
-      ),
+      floatingActionButton: admin
+          ? FloatingActionButton.extended(
+              onPressed: () => _open(const ScanScreen()),
+              icon: const Icon(Icons.qr_code_scanner),
+              label: Text(ap.khoOwner == 'all' ? 'Quét' : 'Quét → ${ap.ownerName(ap.newOwner)}'),
+            )
+          : null,
       body: Column(children: [
+        if (admin)
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 8, 16, 0),
+            child: Row(children: [
+              const Icon(Icons.store_mall_directory_outlined, size: 20),
+              const SizedBox(width: 8),
+              const Text('Kho của'),
+              const SizedBox(width: 12),
+              Expanded(
+                child: DropdownButton<String>(
+                  isExpanded: true,
+                  value: ap.khoOwner,
+                  items: [
+                    const DropdownMenuItem(value: 'all', child: Text('Tất cả')),
+                    const DropdownMenuItem(value: '0', child: Text('Của tôi')),
+                    for (final c in ap.khoCustomers) DropdownMenuItem(value: '${c['id']}', child: Text('${c['name']}')),
+                  ],
+                  onChanged: (v) async {
+                    await ap.setKhoOwner(v!);
+                    _reload();
+                  },
+                ),
+              ),
+            ]),
+          ),
         Padding(
           padding: const EdgeInsets.fromLTRB(12, 10, 12, 4),
           child: TextField(
@@ -175,38 +205,42 @@ class _KhoScreenState extends State<KhoScreen> {
                 _load();
               },
             ),
-            const SizedBox(width: 8),
-            ActionChip(
-                avatar: const Icon(Icons.pin, size: 18),
-                label: const Text('Nhập mã LCSC'),
-                onPressed: () async {
-                  if (await addByLcscCode(context) != null) _reload();
-                }),
-            const SizedBox(width: 8),
-            ActionChip(
-                avatar: const Icon(Icons.document_scanner_outlined, size: 18),
-                label: const Text('Chụp nhãn'),
-                onPressed: () async {
-                  if (await ocrLabelMenu(context) != null) _reload();
-                }),
-            const SizedBox(width: 8),
-            ActionChip(
-                avatar: const Icon(Icons.add, size: 18),
-                label: const Text('Thêm tay'),
-                onPressed: () => _open(const PartEditScreen())),
+            if (admin) ...[
+              const SizedBox(width: 8),
+              ActionChip(
+                  avatar: const Icon(Icons.pin, size: 18),
+                  label: const Text('Nhập mã LCSC'),
+                  onPressed: () async {
+                    if (await addByLcscCode(context) != null) _reload();
+                  }),
+              const SizedBox(width: 8),
+              ActionChip(
+                  avatar: const Icon(Icons.document_scanner_outlined, size: 18),
+                  label: const Text('Chụp nhãn'),
+                  onPressed: () async {
+                    if (await ocrLabelMenu(context) != null) _reload();
+                  }),
+              const SizedBox(width: 8),
+              ActionChip(
+                  avatar: const Icon(Icons.add, size: 18),
+                  label: const Text('Thêm tay'),
+                  onPressed: () => _open(const PartEditScreen())),
+            ],
             const SizedBox(width: 8),
             ActionChip(
                 avatar: const Icon(Icons.list_alt, size: 18),
                 label: Text('BOM${m != null ? ' (${m['boms']})' : ''}'),
                 onPressed: () => _open(const BomListScreen())),
-            const SizedBox(width: 8),
-            ActionChip(
-                avatar: const Icon(Icons.file_download, size: 18),
-                label: const Text('Nhập đơn hàng'),
-                onPressed: () async {
-                  final ok = await importFile(context, 'stock');
-                  if (ok) _reload();
-                }),
+            if (admin) ...[
+              const SizedBox(width: 8),
+              ActionChip(
+                  avatar: const Icon(Icons.file_download, size: 18),
+                  label: const Text('Nhập đơn hàng'),
+                  onPressed: () async {
+                    final ok = await importFile(context, 'stock');
+                    if (ok) _reload();
+                  }),
+            ],
           ]),
         ),
         if (m != null)
@@ -244,7 +278,13 @@ class _KhoScreenState extends State<KhoScreen> {
                           }
                           final p = _items[i];
                           return ListTile(
-                            title: Text(partTitle(p), style: const TextStyle(fontWeight: FontWeight.w600)),
+                            title: Row(children: [
+                              Flexible(child: Text(partTitle(p), style: const TextStyle(fontWeight: FontWeight.w600))),
+                              if (admin && ap.khoOwner == 'all' && (p['owner_id'] as num? ?? 0) != 0) ...[
+                                const SizedBox(width: 6),
+                                OwnerTag('${p['owner_name'] ?? ap.ownerName(p['owner_id'])}'),
+                              ],
+                            ]),
                             subtitle: Text(
                                 [partSub(p), if ('${p['location']}'.isNotEmpty) '📍 ${p['location']}'].join('\n'),
                                 maxLines: 3,
@@ -377,7 +417,7 @@ class _PartScreenState extends State<PartScreen> {
       appBar: AppBar(
         title: Text(p == null ? 'Linh kiện' : partTitle(p)),
         actions: [
-          if (p != null) ...[
+          if (p != null && api.isAdmin) ...[
             IconButton(
                 icon: const Icon(Icons.edit),
                 tooltip: 'Sửa',
@@ -422,6 +462,7 @@ class _PartScreenState extends State<PartScreen> {
                           errorBuilder: (_, _, _) => const SizedBox.shrink()),
                     ),
                   ),
+                if (api.isAdmin) OwnerTag('📦 ${p['owner_name'] ?? 'Của tôi'}'),
                 if (partSub(p).isNotEmpty) Text(partSub(p), style: t.textTheme.bodyMedium),
                 const SizedBox(height: 12),
                 Row(crossAxisAlignment: CrossAxisAlignment.end, children: [
@@ -441,7 +482,7 @@ class _PartScreenState extends State<PartScreen> {
                   ),
                 ]),
                 const SizedBox(height: 8),
-                Wrap(spacing: 8, runSpacing: 8, children: [
+                if (api.isAdmin) Wrap(spacing: 8, runSpacing: 8, children: [
                   for (final d in [-10, -1, 1, 10])
                     OutlinedButton(
                         onPressed: _busy ? null : () => _stock(delta: d), child: Text(d > 0 ? '+$d' : '$d')),
@@ -546,11 +587,13 @@ class _PartEditScreenState extends State<PartEditScreen> {
   late final Map<String, TextEditingController> _c;
   final List<(String, TextEditingController, TextEditingController)> _sups = [];
   bool _saving = false;
+  int _owner = 0;
 
   @override
   void initState() {
     super.initState();
     final p = widget.part ?? {};
+    _owner = widget.part != null ? (p['owner_id'] as num? ?? 0).toInt() : ApiScope.read(context).newOwner;
     _c = {for (final (k, _) in _fields) k: TextEditingController(text: p[k] == null ? (k == 'qty' ? '0' : '') : '${p[k]}')};
     for (final s in (p['suppliers'] as List? ?? [
       {'supplier': 'lcsc'}
@@ -599,6 +642,7 @@ class _PartEditScreenState extends State<PartEditScreen> {
           {'supplier': sup, 'sku': sku.text.trim(), 'url': url.text.trim()}
     ];
     if (widget.part != null) d['id'] = widget.part!['id'];
+    d['owner_id'] = _owner;
     try {
       final p = await ApiScope.read(context).post('/api/kho/part', d) as Map;
       if (!mounted) return;
@@ -623,6 +667,10 @@ class _PartEditScreenState extends State<PartEditScreen> {
           ],
         ),
         body: ListView(padding: const EdgeInsets.all(16), children: [
+          Padding(
+            padding: const EdgeInsets.only(bottom: 10),
+            child: OwnerPicker(value: _owner, onChanged: (v) => setState(() => _owner = v)),
+          ),
           for (final (k, label) in _fields)
             Padding(
               padding: const EdgeInsets.only(bottom: 10),
@@ -701,6 +749,7 @@ Future<bool> importFile(BuildContext context, String kind, {void Function(int bo
   final boards = TextEditingController(text: '1');
   final loc = TextEditingController(), ref = TextEditingController();
   var mode = 'add';
+  var owner = api.isAdmin ? api.newOwner : 0;
   final sample = (pv['sample_raw'] as List).cast<List>();
   final ok = await Navigator.push<bool>(
     context,
@@ -739,6 +788,7 @@ Future<bool> importFile(BuildContext context, String kind, {void Function(int bo
                 ),
               ),
             const SizedBox(height: 12),
+            if (api.isAdmin) OwnerPicker(value: owner, onChanged: (v) => setS(() => owner = v)),
             if (kind == 'bom') ...[
               TextField(controller: name, decoration: const InputDecoration(labelText: 'Tên BOM')),
               TextField(
@@ -775,11 +825,13 @@ Future<bool> importFile(BuildContext context, String kind, {void Function(int bo
         'mapping': mapping,
         'name': name.text,
         'boards': int.tryParse(boards.text) ?? 1,
+        if (api.isAdmin) 'owner_id': owner,
       }) as Map;
       onBom?.call(b['id'] as int);
     } else {
       final r = await api.post('/api/kho/import',
-          {'token': pv['token'], 'mapping': mapping, 'mode': mode, 'location': loc.text, 'ref': ref.text}) as Map;
+          {'token': pv['token'], 'mapping': mapping, 'mode': mode, 'location': loc.text, 'ref': ref.text, 'owner_id': owner})
+          as Map;
       if (context.mounted) {
         toast(context, 'Xong: ${r['created']} mới, ${r['updated']} cập nhật${(r['skipped'] as num) > 0 ? ', bỏ qua ${r['skipped']}' : ''}');
       }
@@ -811,7 +863,8 @@ class _BomListScreenState extends State<BomListScreen> {
 
   Future<void> _load() async {
     try {
-      final r = await ApiScope.read(context).get('/api/kho/boms') as List;
+      final api = ApiScope.read(context);
+      final r = await api.get('/api/kho/boms?${api.ownerQuery}') as List;
       if (mounted) setState(() => _boms = r);
     } catch (e) {
       if (mounted) setState(() => _err = e);
@@ -845,7 +898,8 @@ class _BomListScreenState extends State<BomListScreen> {
                     ListTile(
                       leading: const Icon(Icons.list_alt),
                       title: Text('${b['name']}'),
-                      subtitle: Text('${b['lines']} dòng · ${fmtTime(b['created'] as num)}'),
+                      subtitle: Text('${b['lines']} dòng · ${fmtTime(b['created'] as num)}'
+                          '${ApiScope.of(context).isAdmin ? ' · ${b['owner_name'] ?? 'Của tôi'}' : ''}'),
                       trailing: (b['unmatched'] as num? ?? 0) > 0
                           ? Chip(
                               label: Text('${b['unmatched']} chưa khớp'),
@@ -970,7 +1024,9 @@ class _BomScreenState extends State<BomScreen> {
           await api.post('/api/kho/bom/line', {'line_id': l['id'], 'dnp': l['dnp'] == 1 ? 0 : 1});
         case 'pick':
           final pid = await Navigator.push<int>(
-              context, MaterialPageRoute(builder: (_) => PartPickerScreen(initial: '${l['mpn'] ?? l['value'] ?? ''}')));
+              context,
+              MaterialPageRoute(
+                  builder: (_) => PartPickerScreen(initial: '${l['mpn'] ?? l['value'] ?? ''}', owner: _b!['owner_id'] as int?)));
           if (pid != null) await api.post('/api/kho/bom/line', {'line_id': l['id'], 'part_id': pid});
       }
       _load();
@@ -1012,12 +1068,12 @@ class _BomScreenState extends State<BomScreen> {
                 _act(v);
               }
             },
-            itemBuilder: (_) => const [
-              PopupMenuItem(value: 'rematch', child: Text('Khớp lại với kho')),
-              PopupMenuItem(value: 'add-missing', child: Text('Thêm dòng thiếu vào kho (SL 0)')),
-              PopupMenuItem(value: 'csv-lcsc', child: Text('Sao chép cần mua (LCSC)')),
-              PopupMenuItem(value: 'csv-all', child: Text('Sao chép cần mua (đủ cột)')),
-              PopupMenuItem(value: 'delete', child: Text('Xóa BOM')),
+            itemBuilder: (_) => [
+              const PopupMenuItem(value: 'rematch', child: Text('Khớp lại với kho')),
+              if (api.isAdmin) const PopupMenuItem(value: 'add-missing', child: Text('Thêm dòng thiếu vào kho (SL 0)')),
+              const PopupMenuItem(value: 'csv-lcsc', child: Text('Sao chép cần mua (LCSC)')),
+              const PopupMenuItem(value: 'csv-all', child: Text('Sao chép cần mua (đủ cột)')),
+              const PopupMenuItem(value: 'delete', child: Text('Xóa BOM')),
             ],
           ),
         ],
@@ -1047,8 +1103,9 @@ class _BomScreenState extends State<BomScreen> {
               ),
               IconButton(icon: const Icon(Icons.add_circle_outline), onPressed: () => _setBoards((_boards ?? 1) + 1)),
               const Spacer(),
-              FilledButton.icon(
-                  onPressed: canBuild ? _consume : null, icon: const Icon(Icons.build), label: const Text('Lắp bo')),
+              if (api.isAdmin)
+                FilledButton.icon(
+                    onPressed: canBuild ? _consume : null, icon: const Icon(Icons.build), label: const Text('Lắp bo')),
             ]),
           ),
           Padding(
@@ -1109,7 +1166,8 @@ Future<String> httpGetText(Api api, String path) async {
 
 class PartPickerScreen extends StatefulWidget {
   final String initial;
-  const PartPickerScreen({this.initial = '', super.key});
+  final int? owner;   // quản lý: chỉ hiện hàng của chủ sở hữu này (khách: server tự giới hạn)
+  const PartPickerScreen({this.initial = '', this.owner, super.key});
 
   @override
   State<PartPickerScreen> createState() => _PartPickerScreenState();
@@ -1128,7 +1186,9 @@ class _PartPickerScreenState extends State<PartPickerScreen> {
 
   Future<void> _search() async {
     try {
-      final r = await ApiScope.read(context).get('/api/kho/parts?limit=50&q=${Uri.encodeQueryComponent(_q.text.trim())}') as Map;
+      final api = ApiScope.read(context);
+      final ow = api.isAdmin ? '&owner=${widget.owner ?? api.newOwner}' : '';
+      final r = await api.get('/api/kho/parts?limit=50&q=${Uri.encodeQueryComponent(_q.text.trim())}$ow') as Map;
       if (mounted) setState(() => _items = r['items'] as List);
     } catch (_) {}
   }
@@ -1156,4 +1216,70 @@ class _PartPickerScreenState extends State<PartPickerScreen> {
             ),
         ]),
       );
+}
+
+
+/// Nhãn nhỏ tên chủ sở hữu.
+class OwnerTag extends StatelessWidget {
+  final String text;
+  const OwnerTag(this.text, {super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    final c = Theme.of(context).colorScheme;
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 1),
+      decoration: BoxDecoration(color: c.primaryContainer, borderRadius: BorderRadius.circular(4)),
+      child: Text(text, style: TextStyle(fontSize: 11, color: c.onPrimaryContainer)),
+    );
+  }
+}
+
+/// Chọn "Của tôi" / khách (chỉ quản lý thấy).
+class OwnerPicker extends StatelessWidget {
+  final int value;
+  final ValueChanged<int> onChanged;
+  const OwnerPicker({required this.value, required this.onChanged, super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    final api = ApiScope.of(context);
+    if (!api.isAdmin) return const SizedBox.shrink();
+    return DropdownButtonFormField<int>(
+      initialValue: value,
+      decoration: const InputDecoration(labelText: 'Hàng của', border: OutlineInputBorder(), isDense: true),
+      items: [
+        const DropdownMenuItem(value: 0, child: Text('Của tôi')),
+        for (final c in api.khoCustomers) DropdownMenuItem(value: c['id'] as int, child: Text('${c['name']}')),
+      ],
+      onChanged: (v) => onChanged(v ?? 0),
+    );
+  }
+}
+
+/// Khách đăng nhập tài khoản kho: chỉ màn Kho, chỉ xem (server cũng chặn mọi thao tác sửa).
+class KhoCustomerHome extends StatelessWidget {
+  const KhoCustomerHome({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    final api = ApiScope.of(context);
+    return Scaffold(
+      appBar: AppBar(
+        title: Text('Kho · ${(api.kho['customer'] as Map?)?['name'] ?? ''}'),
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.logout),
+            tooltip: 'Đăng xuất',
+            onPressed: () async {
+              if (await confirm(context, 'Đăng xuất?', 'Thoát tài khoản kho trên máy này.', ok: 'Đăng xuất')) {
+                await api.logout();
+              }
+            },
+          ),
+        ],
+      ),
+      body: const KhoScreen(),
+    );
+  }
 }

@@ -275,6 +275,9 @@ Mở: `http://192.168.2.1:8080/kho` / `https://bpi-r3.tail24dd60.ts.net/kho`, ho
   **Khách** đăng nhập tại `/kho` bằng tài khoản được cấp (cookie `bpi_kho`, phiên 30 ngày, sai 5 lần khóa 5 phút):
   chỉ thấy linh kiện, lịch sử, BOM của mình; tự tải BOM để xem thiếu gì (chỉ khớp với hàng của họ); không sửa số lượng,
   không nhập hàng, không vào được trang quản trị board / IoT / LuCI.
+  **App Android**: quản lý có ô “Kho của” ở màn Kho (nhãn tên khách trên từng linh kiện khi xem “Tất cả”; quét, nhập mã LCSC,
+  chụp nhãn, thêm, nhập đơn, thêm BOM đều vào kho đang chọn). Khách chọn **“Khách kho”** ở màn đăng nhập của app, dùng tài
+  khoản kho được cấp → chỉ có màn Kho ở chế độ chỉ xem (không quét / sửa / lắp bo), vẫn tải BOM để kiểm tra.
 - Dữ liệu: SQLite `/mnt/data/kho/kho.db`, tự sao lưu mỗi ngày vào `/mnt/data/kho/backup/` (giữ 14 bản).
   Xuất toàn bộ kho ra CSV (mở bằng Excel): `/api/kho/export.csv`.
 - Chỉ dùng thư viện chuẩn của Python (đọc `.xlsx` bằng `zipfile` + XML), không cần cài thêm gói.

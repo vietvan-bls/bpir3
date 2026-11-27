@@ -3,6 +3,7 @@ import 'package:material_ui/material_ui.dart';
 import 'api.dart';
 import 'screens/connect.dart';
 import 'screens/home.dart';
+import 'screens/kho.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -52,6 +53,8 @@ class Root extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final api = ApiScope.of(context);
-    return api.connected && api.isAdmin ? const HomeScreen() : const ConnectScreen();
+    if (api.connected && api.isAdmin) return const HomeScreen();
+    if (api.connected && api.isKhoCustomer) return const KhoCustomerHome();   // khách kho: chỉ màn Kho, chỉ xem
+    return const ConnectScreen();
   }
 }

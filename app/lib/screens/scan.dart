@@ -10,7 +10,7 @@ import 'kho.dart';
 /// Tra một mã (QR, C…, chữ) rồi hiện bảng nhập kho. Trả về tên linh kiện nếu đã nhập.
 Future<String?> showCodeResult(BuildContext context, String code) async {
   final api = ApiScope.read(context);
-  final r = await api.post('/api/kho/scan', {'code': code}) as Map;
+  final r = await api.post('/api/kho/scan', {'code': code, 'owner_id': api.newOwner}) as Map;
   if (!context.mounted) return null;
   return showModalBottomSheet<String>(
     context: context,
@@ -223,6 +223,7 @@ class _ScanResultState extends State<_ScanResult> {
         'action': action,
         'qty': int.tryParse(_qty.text.trim()) ?? 0,
         'part_id': ?partId,
+        'owner_id': ApiScope.read(context).newOwner,
         'fields': {
           if (_loc.text.trim().isNotEmpty) 'location': _loc.text.trim(),
           if (_min.text.trim().isNotEmpty) 'min_qty': int.tryParse(_min.text.trim()) ?? 0,
@@ -294,6 +295,7 @@ class _ScanResultState extends State<_ScanResult> {
                 onTap: () => setState(() => part = p),
               ),
           ] else ...[
+            Text('Kho của: ${ApiScope.of(context).ownerName(ApiScope.of(context).newOwner)}', style: t.textTheme.labelMedium),
             if (codeText.isNotEmpty) Text(codeText, style: t.textTheme.bodySmall),
             const SizedBox(height: 8),
             if (already != null)

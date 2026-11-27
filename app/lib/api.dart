@@ -20,7 +20,7 @@ class ApiError implements Exception {
 /// - Có 2 địa chỉ: [lanUrl] (trong mạng nội bộ, toàn quyền, không cần mật khẩu)
 ///   và [publicUrl] (link trycloudflare, cần đăng nhập). Khi mở app sẽ thử LAN trước.
 class Api extends ChangeNotifier {
-  static const _kLan = 'lanUrl', _kPub = 'publicUrl', _kCookie = 'cookie';
+  static const _kLan = 'lanUrl', _kPub = 'publicUrl', _kCookie = 'cookie', _kOwner = 'khoOwner';
 
   final http.Client _client = http.Client();
   late SharedPreferences _prefs;
@@ -33,6 +33,38 @@ class Api extends ChangeNotifier {
 
   bool get connected => base.isNotEmpty;
   bool get isAdmin => who['admin'] == true;
+
+  // ---- kho linh kiện: vai trò + chủ sở hữu đang xem (quản lý)
+  Map<String, dynamic> kho = {};
+  bool get isKhoCustomer => kho['role'] == 'customer';
+  List<Map> get khoCustomers => ((kho['customers'] as List?) ?? const []).cast<Map>();
+  String khoOwner = 'all';   // 'all' | '0' (của tôi) | id khách
+
+  /// Tham số phạm vi xem cho API kho (khách: server tự giới hạn).
+  String get ownerQuery => isAdmin ? 'owner=$khoOwner' : '';
+  /// Chủ sở hữu của dữ liệu tạo mới.
+  int get newOwner => khoOwner == 'all' ? 0 : int.tryParse(khoOwner) ?? 0;
+  String ownerName(Object? id) {
+    final i = id is int ? id : int.tryParse('$id') ?? 0;
+    if (i == 0) return 'Của tôi';
+    return '${khoCustomers.firstWhere((c) => c['id'] == i, orElse: () => {'name': 'Khách $i'})['name']}';
+  }
+
+  Future<void> setKhoOwner(String v) async {
+    khoOwner = v;
+    await _prefs.setString(_kOwner, v);
+    notifyListeners();
+  }
+
+  Future<void> refreshKho() async {
+    try {
+      kho = Map<String, dynamic>.from(await get('/api/kho/whoami') as Map);
+      if (khoOwner != 'all' && khoOwner != '0' && !khoCustomers.any((c) => '${c['id']}' == khoOwner)) khoOwner = 'all';
+    } catch (_) {
+      kho = {};
+    }
+    notifyListeners();
+  }
   bool get isLocal => who['local'] == true;
   bool get viaLan => base.isNotEmpty && base == lanUrl;
 
@@ -41,6 +73,7 @@ class Api extends ChangeNotifier {
     lanUrl = _prefs.getString(_kLan) ?? '';
     publicUrl = _prefs.getString(_kPub) ?? '';
     cookie = _prefs.getString(_kCookie);
+    khoOwner = _prefs.getString(_kOwner) ?? 'all';
   }
 
   static String normalize(String url) {
@@ -84,7 +117,7 @@ class Api extends ChangeNotifier {
         if (r.statusCode == 200) {
           who = jsonDecode(utf8.decode(r.bodyBytes)) as Map<String, dynamic>;
           base = url;
-          notifyListeners();
+          await refreshKho();
           if (isAdmin) unawaited(_learnUrls());
           return true;
         }
@@ -116,27 +149,49 @@ class Api extends ChangeNotifier {
     final r = await _client.post(Uri.parse('$base/api/login'),
         headers: _headers(json: true), body: jsonEncode({'password': password}));
     _check(r);
-    final sc = r.headers['set-cookie'];
+    await _storeCookies(r.headers['set-cookie']);
+    await connect();
+  }
+
+  /// Gộp cookie từ Set-Cookie vào cookie đang có (giữ cả cookie quản trị lẫn cookie khách kho).
+  Future<void> _storeCookies(String? sc, {String? remove}) async {
+    final m = <String, String>{};
+    for (final kv in (cookie ?? '').split(';')) {
+      final i = kv.indexOf('=');
+      if (i > 0) m[kv.substring(0, i).trim()] = kv.substring(i + 1).trim();
+    }
+    if (remove != null) m.remove(remove);
     if (sc != null) {
       // Lấy các cặp name=value, bỏ thuộc tính (Path, HttpOnly, ...)
-      final parts = RegExp(r'(?:^|,\s*)([^=;,\s]+)=([^;,]*)')
-          .allMatches(sc)
-          .where((m) => !const {'path', 'expires', 'max-age', 'domain', 'samesite'}
-              .contains(m[1]!.toLowerCase()))
-          .map((m) => '${m[1]}=${m[2]}');
-      cookie = parts.join('; ');
-      await _prefs.setString(_kCookie, cookie!);
+      for (final x in RegExp(r'(?:^|,\s*)([^=;,\s]+)=([^;,]*)').allMatches(sc)) {
+        if (const {'path', 'expires', 'max-age', 'domain', 'samesite'}.contains(x[1]!.toLowerCase())) continue;
+        if (x[2]!.isEmpty) {
+          m.remove(x[1]!);
+        } else {
+          m[x[1]!] = x[2]!;
+        }
+      }
     }
+    cookie = m.isEmpty ? null : m.entries.map((e) => '${e.key}=${e.value}').join('; ');
+    cookie == null ? await _prefs.remove(_kCookie) : await _prefs.setString(_kCookie, cookie!);
+  }
+
+  /// Đăng nhập tài khoản kho (khách): chỉ xem hàng + BOM của mình.
+  Future<void> khoLogin(String username, String password) async {
+    final r = await _client.post(Uri.parse('$base/api/kho/login'),
+        headers: _headers(json: true), body: jsonEncode({'username': username, 'password': password}));
+    _check(r);
+    await _storeCookies(r.headers['set-cookie']);
     await connect();
   }
 
   Future<void> logout() async {
     try {
-      await post('/api/logout', {});
+      await post(isKhoCustomer && !isAdmin ? '/api/kho/logout' : '/api/logout', {});
     } catch (_) {}
-    cookie = null;
-    await _prefs.remove(_kCookie);
+    await _storeCookies(null, remove: isKhoCustomer && !isAdmin ? 'bpi_kho' : 'bpi_session');
     who = {};
+    kho = {};
     notifyListeners();
   }
 
