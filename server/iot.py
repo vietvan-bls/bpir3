@@ -112,7 +112,7 @@ class IoT:
             self.error = "Chưa cài python3-paho-mqtt"
             return
         try:
-            with open(MQTT_CONF) as f:
+            with open(MQTT_CONF, encoding="utf-8") as f:
                 conf = json.load(f)
         except (OSError, ValueError) as e:
             self.error = f"Không đọc được {MQTT_CONF}: {e}"
@@ -240,7 +240,7 @@ class IoT:
 
     def controls(self):
         try:
-            with open(CONTROLS_FILE) as f:
+            with open(CONTROLS_FILE, encoding="utf-8") as f:
                 items = json.load(f)
         except (OSError, ValueError):
             items = []
@@ -276,7 +276,7 @@ class IoT:
                 item.update(min=lo, max=hi, step=float(c.get("step", 1)) or 1)
             clean.append(item)
         tmp = CONTROLS_FILE + ".tmp"
-        with open(tmp, "w") as f:
+        with open(tmp, "w", encoding="utf-8") as f:
             json.dump(clean, f, ensure_ascii=False, indent=1)
         os.replace(tmp, CONTROLS_FILE)
         return self.controls()
@@ -312,20 +312,20 @@ class DeviceAccounts:
 
     def _meta(self):
         try:
-            with open(self.META) as f:
+            with open(self.META, encoding="utf-8") as f:
                 return json.load(f)
         except (OSError, ValueError):
             return {}
 
     def _save_meta(self, m):
         tmp = self.META + ".tmp"
-        with open(tmp, "w") as f:
+        with open(tmp, "w", encoding="utf-8") as f:
             json.dump(m, f, ensure_ascii=False)
         os.replace(tmp, self.META)
 
     def _users(self):
         try:
-            with open(self.PASSWD) as f:
+            with open(self.PASSWD, encoding="utf-8") as f:
                 return [ln.split(":", 1)[0] for ln in f if ":" in ln]
         except OSError:
             return []
@@ -422,7 +422,7 @@ class Auth:
 
     def _load(self):
         try:
-            with open(self.path) as f:
+            with open(self.path, encoding="utf-8") as f:
                 return json.load(f)
         except (OSError, ValueError):
             return {}
@@ -430,7 +430,7 @@ class Auth:
     def _save(self, data):
         tmp = self.path + ".tmp"
         fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-        with os.fdopen(fd, "w") as f:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
             json.dump(data, f)
         os.replace(tmp, self.path)
 

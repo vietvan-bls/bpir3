@@ -33,6 +33,7 @@ kho linh kiện, VPN cho WiFi, debug STM32 từ xa).
 | Truy cập từ xa: Tailscale Funnel (tên cố định), Cloudflare quick tunnel, SSH, LuCI | | [Tailscale](#tên-cố-định-qua-tailscale-funnel-bpi-r3tail24dd60tsnet), [Cloudflare](#truy-cập-từ-internet-cloudflare-quick-tunnel) |
 | App Android (Flutter): mọi chức năng trên + quét mã, OCR, chế độ khách kho | `out/app/bpir3-arm64.apk` | [App](#7-app-điện-thoại-android--ios) |
 | Build U-Boot/TF-A, image SD, OpenWrt ImageBuilder | `build.sh`, `mksdimg.sh`, `openwrt.sh` | [Build từ source](#build-từ-source-bootloader-openwrt-app) |
+| Chạy kho + IoT trên Windows / Linux / Pi (không cần board) | `server/desktop.py`, `run-windows.bat` | [Máy tính](#chạy-kho--iot-trên-máy-tính-windows-1011-linux-raspberry-pi-serverdesktoppy) |
 | ESP32 mẫu gửi MQTT/TLS từ xa | `firmware/esp32-mqtt/` | [Thiết bị ở xa](#thiết-bị-ở-xa-esp32-qua-mqtttls) |
 
 Thư mục trong repo:
@@ -496,6 +497,30 @@ BPI_SSH=b fpga/flash.sh fpga/tangnano4k/build/hello.fs tangnano4k -f   # ghi fla
   `can.py up 500000` · `can.py dump` · `can.py send 123#DEADBEEF` · `can.py down`. Hoặc dùng `ip link set can0 type can bitrate 500000`.
 - Đã thử loopback trong chip (`loopback on`): gửi khung `0x123` và nhận lại đúng. Ra bus thật cần điện trở đầu cuối 120 Ω
   (candleLight thường có jumper) và ít nhất một node khác để ACK.
+
+## Chạy kho + IoT trên máy tính (Windows 10/11, Linux, Raspberry Pi) ([server/desktop.py](server/desktop.py))
+
+Không cần board: chạy cùng mã nguồn server ở **chế độ máy tính**, chỉ có các trang `/kho` và `/iot`. Các tab của router
+(Wi-Fi, LAN, VPN, LED, camera, nhạc) bị tắt và API của chúng trả 404.
+
+**Windows 10/11 64-bit**
+1. Cài Python 3.10 trở lên từ python.org, nhớ tick **Add python.exe to PATH**.
+2. Tải repo (GitHub → Code → Download ZIP) rồi giải nén.
+3. Khôi phục dữ liệu từ bản sao lưu mã hóa (hỏi mật khẩu trong `/root/.bpi-backup-pass` trên board):
+   `server\run-windows.bat --restore ..\data-backup\bpi-data-YYYYMMDD-HHMM.tar.gz.enc`
+4. Bấm đúp `server\run-windows.bat` → trình duyệt mở `http://127.0.0.1:8080/kho`. Lần đầu script tự cài `paho-mqtt` và `cryptography`.
+
+**Linux / Raspberry Pi:** `python3 -m pip install -r server/requirements-desktop.txt`, rồi
+`server/run-desktop.sh --restore data-backup/….enc` và `server/run-desktop.sh`.
+
+- Dữ liệu nằm ở `server/data/` (đã gitignore): `kho/kho.db`, `iot/iot.db`, `web-auth.json`, `iot-auth.json`, `mqtt.json`.
+  Đổi chỗ bằng `--data THƯ_MỤC`.
+- Trên chính máy đó không cần mật khẩu. `--lan` cho điện thoại hay máy khác trong mạng vào `http://<IP máy>:8080/kho`, phải
+  đăng nhập bằng mật khẩu quản trị. Mật khẩu này giống trên board nếu khôi phục từ bản sao lưu; đặt mới bằng `--set-password`.
+- IoT: dữ liệu cũ xem được ngay. Muốn nhận dữ liệu mới thì sửa `data/mqtt.json` trỏ `host` tới broker MQTT (vd IP của board
+  `192.168.2.1`) hoặc cài Mosquitto cho Windows. Tạo tài khoản thiết bị MQTT chỉ chạy trên board.
+- Đã thử trên Linux, cả khi bảng mã hệ thống là ASCII (giả lập Windows không phải UTF-8): khôi phục, đọc/ghi kho, IoT,
+  tiếng Việt và phân quyền đều đúng. **Chưa chạy trên máy Windows thật.**
 
 ## Truy cập từ Internet (Cloudflare quick tunnel)
 

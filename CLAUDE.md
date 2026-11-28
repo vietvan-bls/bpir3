@@ -110,6 +110,8 @@ cp build/app/outputs/flutter-apk/app-arm64-v8a-release.apk ../out/app/bpir3-arm6
 - USB-CAN candleLight → `can0` (driver gs_usb đã cài), công cụ `/usr/bin/can.py`; cổng để `down` khi không dùng.
 - Sao lưu dữ liệu: `tools/backup-data.sh` → `data-backup/*.enc` (AES-256, mật khẩu ở `/root/.bpi-backup-pass` trên board).
   **Không bao giờ commit bản giải mã.** Bản đầu tiên: 2026-11-28.
+- `server/desktop.py` (chế độ máy tính `BPI_DESKTOP=1`, chỉ kho + IoT). `app.py`/`iot.py` trong repo **mới hơn bản trên board**
+  (thêm chế độ máy tính + `encoding="utf-8"`, không đổi hành vi trên board); lần deploy sau sẽ mang theo.
 - App Android 1.5.0 (`out/app/bpir3-arm64.apk`).
 - Mật khẩu quản trị web panel đã từng lộ trong chat phiên trước → đã nhắc người dùng đổi (chưa rõ đã đổi chưa).
 

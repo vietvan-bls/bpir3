@@ -116,19 +116,24 @@ LED = "/sys/class/leds/blue:status"
 TUNNEL_LOG = "/tmp/cftunnel.log"
 SSH_TUNNEL_LOG = "/tmp/sshtunnel.log"
 LOCAL_NETS = [ipaddress.ip_network(n) for n in ("192.168.0.0/16", "10.0.0.0/8", "172.16.0.0/12")]
+# Chế độ máy tính (desktop.py, chạy trên Windows/Linux/Pi): chỉ kho + IoT, tắt các tab của router.
+# Chỉ chính máy đó (127.0.0.1) được coi là "nội bộ"; máy khác trong mạng phải đăng nhập bằng mật khẩu.
+DESKTOP = os.environ.get("BPI_DESKTOP") == "1"
+if DESKTOP:
+    LOCAL_NETS = [ipaddress.ip_network(n) for n in ("127.0.0.0/8", "::1/128")]
 
 
 # ---------------------------------------------------------------- helpers
 def read(path, default=""):
     try:
-        with open(path) as f:
+        with open(path, encoding="utf-8") as f:
             return f.read().strip()
     except OSError:
         return default
 
 
 def write(path, value):
-    with open(path, "w") as f:
+    with open(path, "w", encoding="utf-8") as f:
         f.write(value)
 
 
@@ -735,6 +740,8 @@ CAMERA_GRAY = os.environ.get("CAMERA_GRAY", "/mnt/data/camera/vtest_192x144.gray
 
 USE_LIVE = os.path.exists(CAMERA_DEVICE) and os.environ.get("CAMERA_MODE", "auto") != "file"
 try:
+    if DESKTOP:
+        raise RuntimeError("chế độ máy tính")
     import vision as _vision
     if USE_LIVE:
         _w, _h = (int(v) for v in CAMERA_SIZE.split("x"))
@@ -746,6 +753,8 @@ except Exception as e:  # noqa: BLE001 - thiếu numpy / thiếu file thì camer
     VISION = None
 
 try:
+    if DESKTOP:
+        raise OSError("chế độ máy tính")
     if USE_LIVE:
         CAMERA = LiveCamera(CAMERA_DEVICE, CAMERA_SIZE, CAMERA_FPS, VISION)
         print(f"Camera thật: {CAMERA_DEVICE} {CAMERA_SIZE} {CAMERA_FPS} fps", flush=True)
@@ -758,6 +767,8 @@ except (OSError, ValueError) as e:
 
 # ---------------------------------------------------------------- Nhạc (music.py)
 try:
+    if DESKTOP:
+        raise RuntimeError("chế độ máy tính")
     import music as _music
     MUSIC = _music.Library()
 except Exception as e:  # noqa: BLE001
@@ -774,6 +785,8 @@ except Exception as e:  # noqa: BLE001
 
 # ---------------------------------------------------------------- Thống kê truy cập web (traffic.py)
 try:
+    if DESKTOP:
+        raise RuntimeError("chế độ máy tính")
     import traffic as _traffic
     TRAFFIC = _traffic.Traffic(lan_ips=[lan_config()["ip"]])
 except Exception as e:  # noqa: BLE001
@@ -783,6 +796,8 @@ except Exception as e:  # noqa: BLE001
 
 # ---------------------------------------------------------------- VPN cho mạng WiFi (vpn.py)
 try:
+    if DESKTOP:
+        raise RuntimeError("chế độ máy tính")
     import vpn as _vpn
 except Exception as e:  # noqa: BLE001
     print(f"VPN tắt: {e}", flush=True)
@@ -810,7 +825,7 @@ except Exception as e:  # noqa: BLE001
 
 
 # ---------------------------------------------------------------- Đăng nhập (truy cập từ Internet)
-AUTH_FILE = "/etc/bpi-web-auth.json"   # nằm trong overlay, giữ qua khởi động lại
+AUTH_FILE = os.environ.get("BPI_AUTH_FILE", "/etc/bpi-web-auth.json")   # nằm trong overlay, giữ qua khởi động lại
 SESSION_DAYS = 7
 PBKDF2_ITER = 200_000
 MAX_FAILS, LOCK_SECONDS = 5, 300
@@ -821,7 +836,7 @@ FAILS = {}  # ip -> [số lần sai, khóa tới thời điểm]
 
 def load_auth():
     try:
-        with open(AUTH_FILE) as f:
+        with open(AUTH_FILE, encoding="utf-8") as f:
             return json.load(f)
     except (OSError, ValueError):
         return {}
@@ -830,7 +845,7 @@ def load_auth():
 def save_auth(data):
     tmp = AUTH_FILE + ".tmp"
     fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-    with os.fdopen(fd, "w") as f:
+    with os.fdopen(fd, "w", encoding="utf-8") as f:
         json.dump(data, f)
     os.replace(tmp, AUTH_FILE)
 
@@ -912,6 +927,15 @@ def try_login(ip, pw):
 
 
 # ---------------------------------------------------------------- HTTP
+DESKTOP_API = ("/api/kho/", "/api/iot/", "/api/login", "/api/logout", "/api/whoami", "/api/password")
+
+
+def desktop_blocked(path):
+    """Chế độ máy tính: API của router (Wi-Fi, LAN, VPN, LED, camera, nhạc…) không có."""
+    return DESKTOP and (path.startswith(LUCI_PREFIXES) or (path.startswith("/api/") and not path.startswith(DESKTOP_API))
+                        or path.startswith(("/camera", "/music/")))
+
+
 PUBLIC_PATHS = {"/", "/index.html", "/api/whoami", "/api/login"}
 
 # LuCI (uhttpd cổng 80) đi chung link công khai: các đường dẫn này được chuyển tiếp sang LuCI,
@@ -1397,6 +1421,8 @@ class Handler(BaseHTTPRequestHandler):
     def do_GET(self):
         url = urlparse(self.path)
         path, q = url.path, parse_qs(url.query)
+        if desktop_blocked(path):
+            return self._send(404, {"error": "Không có trên bản chạy máy tính (chỉ kho + IoT)"})
         if path.startswith(LUCI_PREFIXES):
             return self.proxy_luci()
         if path in ("/kho", "/kho.html"):   # trang tự hiện màn hình đăng nhập (quản lý hoặc tài khoản khách)
@@ -1439,6 +1465,8 @@ class Handler(BaseHTTPRequestHandler):
                 return self._send(400, {"error": str(e)})
         if path not in PUBLIC_PATHS and not self.is_admin():
             return self.need_login()
+        if DESKTOP and path in ("/", "/index.html"):   # máy tính: không có bảng điều khiển router
+            return self._send(302, b"", "text/plain", {"Location": "/kho"})
         if path in ("/", "/index.html"):
             with open(os.path.join(HERE, "index.html"), "rb") as f:
                 return self._send(200, f.read(), "text/html")
@@ -1512,6 +1540,8 @@ class Handler(BaseHTTPRequestHandler):
     def do_POST(self):
         length = int(self.headers.get("Content-Length", 0) or 0)
         url = urlparse(self.path)
+        if desktop_blocked(url.path):
+            return self._send(404, {"error": "Không có trên bản chạy máy tính (chỉ kho + IoT)"})
         if url.path == "/api/music/upload":
             return self.music_upload(url, length)
         if url.path == "/api/kho/preview":
@@ -1634,5 +1664,11 @@ if __name__ == "__main__":
         finally:
             os._exit(0)
     signal.signal(signal.SIGTERM, _stop)
-    print(f"Server listening on port {PORT}", flush=True)
-    Server(("0.0.0.0", PORT), Handler).serve_forever()
+    if hasattr(signal, "SIGBREAK"):          # Windows: đóng cửa sổ / Ctrl-Break
+        signal.signal(signal.SIGBREAK, _stop)
+    bind = os.environ.get("BIND", "0.0.0.0")
+    print(f"Server listening on {bind}:{PORT}", flush=True)
+    try:
+        Server((bind, PORT), Handler).serve_forever()
+    except KeyboardInterrupt:
+        _stop()

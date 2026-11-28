@@ -12,3 +12,6 @@ backup/
 # Python
 __pycache__/
 *.pyc
+
+# Dữ liệu khi chạy server/desktop.py trên máy tính (không commit)
+server/data/
