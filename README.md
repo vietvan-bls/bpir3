@@ -29,6 +29,7 @@ kho linh kiện, VPN cho WiFi, debug STM32 từ xa).
 | IoT: MQTT broker, dữ liệu + biểu đồ, nút điều khiển, tài khoản thiết bị, mật khẩu riêng | `/iot` | [MQTT](#mqtt-broker-iot) |
 | VPN cho Wi-Fi (đổi nước): VPN Gate miễn phí / file WireGuard-OpenVPN, kill-switch | tab 🌍 VPN + app | [VPN](#vpn-cho-wifi-bpi-r3-đổi-nước-servervpnpy-tab--vpn) |
 | Debug STM32 từ xa qua ST-Link + OpenOCD | tailnet :3333 | [Debug STM32](#debug-stm32-từ-xa-st-link-cắm-vào-board) |
+| Debug S32K144 từ xa qua J-Link + OpenOCD | board :3334 | [Debug S32K144](#debug-s32k144-từ-xa-j-link-cắm-vào-board-serveropenocds32k144cfg) |
 | FPGA Tang Nano 4K: build mã nguồn mở trong container, nạp qua USB của board | `fpga/` | [FPGA](#fpga-tang-nano-4k-cắm-usb-vào-board-fpga) |
 | Truy cập từ xa: Tailscale Funnel (tên cố định), Cloudflare quick tunnel, SSH, LuCI | | [Tailscale](#tên-cố-định-qua-tailscale-funnel-bpi-r3tail24dd60tsnet), [Cloudflare](#truy-cập-từ-internet-cloudflare-quick-tunnel) |
 | App Android (Flutter): mọi chức năng trên + quét mã, OCR, chế độ khách kho | `out/app/bpir3-arm64.apk` | [App](#7-app-điện-thoại-android--ios) |
@@ -533,6 +534,24 @@ Không cần board: chạy cùng mã nguồn server ở **chế độ máy tính
   `192.168.2.1`) hoặc cài Mosquitto cho Windows. Tạo tài khoản thiết bị MQTT chỉ chạy trên board.
 - Đã thử trên Linux, cả khi bảng mã hệ thống là ASCII (giả lập Windows không phải UTF-8): khôi phục, đọc/ghi kho, IoT,
   tiếng Việt và phân quyền đều đúng. **Chưa chạy trên máy Windows thật.**
+
+## Debug S32K144 từ xa (J-Link cắm vào board) ([server/openocd/s32k144.cfg](server/openocd/s32k144.cfg))
+
+- Kit **Maaz edu S32K144** (NXP S32K144, Cortex-M4F, 512 KB flash, 64 KB FlexNVM), mạch nạp **SEGGER J-Link** `1366:0105`
+  (serial `000772757404`) cắm USB board. OpenOCD 0.12 trên board có driver `jlink`, nhưng không có cấu hình S32K, nên dùng
+  `/etc/openocd/s32k144.cfg` (bản trong repo). Cấu hình này dùng SWD 1 MHz (4 MHz bị lỗi USB), GDB `:3334`, telnet `:4445`,
+  chạy song song được với OpenOCD của ST-Link.
+- Chạy: `openocd -f /etc/openocd/s32k144.cfg` trên board. Từ xa:
+  `ssh -L 3334:127.0.0.1:3334 … 'openocd -f /etc/openocd/s32k144.cfg'`, rồi `gdb-multiarch file.elf` → `target extended-remote :3334`.
+  Hoặc mở qua tailnet bằng `tailscale serve` như với STM32.
+- Đã kiểm tra: `SIM_SDID = 0x144F14EA`, `FSEC = 0xFE` (chưa khóa), MDM-AP `0x001c0000`.
+- **Firmware gốc sao lưu** ở `/mnt/data/s32k-backup/` trên board: `flash-orig.bin` (512 KB, md5 `61b0d4cb90640ba96b6b4bee0a396aa0`,
+  dùng tới `0x8464`) và `flexnvm-orig.bin` (64 KB). Đã đọc 2 lần, khớp nhau.
+- OpenOCD 0.12 **không ghi được flash S32K1** (không có driver FTFC). Firmware thử chạy trong SRAM (`0x20000000`): `load` qua GDB,
+  đặt `$sp`/`$pc` từ bảng vector, nhớ tắt WDOG và đặt `VTOR`. Reset hoặc rút điện thì chip quay về firmware trong flash.
+  Muốn ghi flash thì cần thêm thuật toán FTFC hoặc dùng J-Link Commander / pyOCD + pack S32K1 (chưa làm).
+- J-Link có cổng COM ảo (`kmod-usb-acm` → `/dev/ttyACM0`). Firmware gốc không in ra cổng này (cũng không dùng RTT).
+- Firmware gốc dùng PTD15/PTD16 (LED, giống EVB của NXP) và PTC0–11, PTC14–17 làm chân ra.
 
 ## Truy cập từ Internet (Cloudflare quick tunnel)
 

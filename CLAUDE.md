@@ -99,6 +99,8 @@ cp build/app/outputs/flutter-apk/app-arm64-v8a-release.apk ../out/app/bpir3-arm6
   chỉ dùng bộ mã nguồn mở. Tang Console 60K (GW5AT-60): nạp được, báo DONE, nhưng UART chưa thấy gì (Apicula chưa thử chip này trên phần cứng thật).
   nextpnr có GW5AT-60B phải build từ source (`-DHIMBAECHEL_GOWIN_DEVICES="GW5AT-60B;GW1NS-4"`, cài vào `/opt/nextpnr`) + `apycula>=0.36`.
 - Tang Nano 4K: BL702 chỉ có JTAG, **không có UART** qua USB (đã dò cả 29 chân).
+- J-Link OpenSDA của kit S32K144: `adapter speed 4000` → LIBUSB_ERROR_IO, dùng 1000 kHz. GCC tối ưu bỏ lệnh ghi biến
+  không-volatile trước vòng lặp vô hạn (đã gặp khi debug) → biến muốn xem bằng GDB nên để `volatile`.
 - `apk search` có thể rỗng nếu chỉ mục cũ → `apk update` trước.
 
 ## 5. Trạng thái hiện tại (cuối phiên trước)
@@ -112,6 +114,9 @@ cp build/app/outputs/flutter-apk/app-arm64-v8a-release.apk ../out/app/bpir3-arm6
   **Không bao giờ commit bản giải mã.** Bản đầu tiên: 2026-11-28.
 - `server/desktop.py` (chế độ máy tính `BPI_DESKTOP=1`, chỉ kho + IoT). Board đã deploy bản mới nhất (28/11: giá LCSC/Digi-Key).
 - Giá Digi-Key: chưa có khóa API (người dùng cần tạo ở developer.digikey.com, nhập trên web /kho → Nhập hàng). Code Digi-Key **chưa thử với khóa thật**.
+- S32K144 (kit Maaz edu) + J-Link cắm USB board: `/etc/openocd/s32k144.cfg` (GDB :3334). Firmware gốc sao lưu
+  `/mnt/data/s32k-backup/flash-orig.bin` (md5 61b0d4cb…). Đã cài `kmod-usb-acm`. OpenOCD 0.12 không ghi được flash S32K1:
+  test chạy trong SRAM, code test **không commit** (người dùng dặn khi làm STM32).
 - App Android 1.6.1 (`out/app/bpir3-arm64.apk`): giá hiện tại LCSC/Digi-Key.
 - Mật khẩu quản trị web panel đã từng lộ trong chat phiên trước → đã nhắc người dùng đổi (chưa rõ đã đổi chưa).
 
