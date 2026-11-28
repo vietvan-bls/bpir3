@@ -43,6 +43,7 @@ Thư mục trong repo:
 | `app/` | App Flutter (Android + iOS) — `lib/api.dart` (client API), `lib/screens/*` |
 | `firmware/esp32-mqtt/` | Sketch Arduino ESP32 MQTT/TLS (chưa biên dịch thử) |
 | `fpga/` | Thiết kế FPGA (Tang Nano 4K), script build/nạp, mã nguồn `ftdi-uart`, script build `openFPGALoader` cho board |
+| `data-backup/` | Sao lưu dữ liệu board **đã mã hóa** (kho, IoT, cấu hình) — xem `data-backup/README.md` |
 | `tools/` | Script chạy trên board (mở rộng thẻ nhớ, đo tốc độ nhận dạng) |
 | `build.sh`, `mksdimg.sh`, `openwrt.sh` | Build U-Boot/TF-A, tạo image SD, build OpenWrt bằng ImageBuilder |
 | `out/` | Bootloader đã build (`bl2.img`, `fip.bin`, `u-boot.bin`) + APK (`out/app/bpir3-arm64.apk`) + `out/fpga/` (openFPGALoader, ftdi-uart cho aarch64) |
