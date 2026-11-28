@@ -107,6 +107,7 @@ cp build/app/outputs/flutter-apk/app-arm64-v8a-release.apk ../out/app/bpir3-arm6
   (tài khoản `iot`, `server`, `esp-xa`), Tailscale Funnel, OpenOCD + ST-Link (đích STM32F1, firmware gốc sao lưu ở
   `/mnt/data/stm32-backup/`), VPN (**người dùng đang bật VPN Gate Nhật**), webcam đã được hỗ trợ nhưng gần đây không thấy cắm.
 - FPGA Tang Nano 4K cắm USB board, `openFPGALoader` ở `/mnt/data/fpga/` (README mục FPGA), đang nạp `hello.fs` (SRAM).
+- USB-CAN candleLight → `can0` (driver gs_usb đã cài), công cụ `/usr/bin/can.py`; cổng để `down` khi không dùng.
 - App Android 1.5.0 (`out/app/bpir3-arm64.apk`).
 - Mật khẩu quản trị web panel đã từng lộ trong chat phiên trước → đã nhắc người dùng đổi (chưa rõ đã đổi chưa).
 

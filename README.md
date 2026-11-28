@@ -19,7 +19,7 @@ kho linh kiện, VPN cho WiFi, debug STM32 từ xa).
                                                   ├─ web server :8080  (server/app.py) ◄── app Android
                                                   ├─ Mosquitto :1883 (+ TLS :8443 qua Funnel)
                                                   ├─ OpenOCD :3333/:4444 (ST-Link → STM32) qua tailnet
-                                                  └─ USB: webcam UVC, card âm thanh, ST-Link (qua hub), Tang Nano 4K (FPGA)
+                                                  └─ USB: webcam UVC, card âm thanh, ST-Link (qua hub), Tang Nano 4K (FPGA), candleLight (CAN)
 ```
 
 | Tính năng | Ở đâu | Mục README |
@@ -486,6 +486,15 @@ BPI_SSH=b fpga/flash.sh fpga/tangnano4k/build/hello.fs tangnano4k -f   # ghi fla
   `ssh -L 4000:127.0.0.1:4000 … 'PYTHONPATH=/mnt/data/pylib python3 /mnt/data/esp/rfc2217-server.py /dev/ttyUSB0 4000'`,
   rồi `esptool --port rfc2217://127.0.0.1:4000 chip-id`. Lần thử ESP8684 đầu tiên chip không gửi ra byte nào → kiểm tra dây TX/RX/GND/nguồn
   và vào chế độ nạp (giữ GPIO9 xuống GND rồi reset).
+
+
+### CAN bus (candleLight USB-CAN)
+
+- Adapter candleLight (`1d50:606f`, firmware gs_usb, clock 48 MHz) → driver `kmod-can-usb-gs` + `kmod-can-raw` (đã cài) → cổng `can0`.
+- OpenWrt không có gói `can-utils` → dùng `can.py` (`tools/can.py`, đã chép vào `/usr/bin/can.py` trên board):
+  `can.py up 500000` · `can.py dump` · `can.py send 123#DEADBEEF` · `can.py down`. Hoặc dùng `ip link set can0 type can bitrate 500000`.
+- Đã thử loopback trong chip (`loopback on`): gửi khung `0x123` và nhận lại đúng. Ra bus thật cần điện trở đầu cuối 120 Ω
+  (candleLight thường có jumper) và ít nhất một node khác để ACK.
 
 ## Truy cập từ Internet (Cloudflare quick tunnel)
 
