@@ -551,7 +551,8 @@ Không cần board: chạy cùng mã nguồn server ở **chế độ máy tính
   đặt `$sp`/`$pc` từ bảng vector, nhớ tắt WDOG và đặt `VTOR`. Reset hoặc rút điện thì chip quay về firmware trong flash.
   Muốn ghi flash thì cần thêm thuật toán FTFC hoặc dùng J-Link Commander / pyOCD + pack S32K1 (chưa làm).
 - J-Link có cổng COM ảo (`kmod-usb-acm` → `/dev/ttyACM0`). Firmware gốc không in ra cổng này (cũng không dùng RTT).
-- Firmware gốc dùng PTD15/PTD16 (LED, giống EVB của NXP) và PTC0–11, PTC14–17 làm chân ra.
+- LED trên kit Maaz: **PTD15 = đỏ, PTD16 = xanh dương** (người dùng xác nhận khi chạy firmware test, khác EVB của NXP: PTD16 là xanh lá ở đó).
+  Firmware gốc còn dùng PTC0–11, PTC14–17 làm chân ra.
 
 ## Truy cập từ Internet (Cloudflare quick tunnel)
 
