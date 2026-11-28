@@ -31,6 +31,45 @@ String fmtTime(num t) {
   return '${two(d.day)}/${two(d.month)} ${two(d.hour)}:${two(d.minute)}';
 }
 
+/// Đơn giá USD: $1.23 / $0.0173 / $0.00085
+String fmtUsd(num? v) {
+  if (v == null) return '';
+  if (v >= 1) return '\$${v.toStringAsFixed(2)}';
+  if (v >= 0.01) return '\$${v.toStringAsFixed(4).replaceFirst(RegExp(r'0+$'), '').replaceFirst(RegExp(r'\.$'), '')}';
+  return '\$${v.toStringAsPrecision(2)}';
+}
+
+/// Giá hiện ở danh sách: giá thị trường rẻ nhất (LCSC / Digi-Key), không có thì giá nhập.
+String? listPrice(Map p) {
+  final m = p['market'] as Map?;
+  if (m != null && m['unit'] != null) return '${fmtUsd(m['unit'] as num)} ${m['supplier'] == 'lcsc' ? 'LC' : 'DK'}';
+  if (p['price'] != null) return fmtUsd(p['price'] as num);
+  return null;
+}
+
+/// Cập nhật giá mọi linh kiện (chạy nền trên board), chờ xong rồi báo.
+Future<void> refreshAllPrices(BuildContext context) async {
+  final api = ApiScope.read(context);
+  try {
+    var r = await api.post('/api/kho/prices/refresh-all', {'owner': api.khoOwner}) as Map;
+    if ((r['total'] as num? ?? 0) == 0) {
+      if (context.mounted) toast(context, 'Không có linh kiện nào có mã LCSC / Digi-Key');
+      return;
+    }
+    if (context.mounted) toast(context, 'Đang cập nhật giá ${r['total']} linh kiện…');
+    while (r['running'] == true) {
+      await Future.delayed(const Duration(seconds: 2));
+      r = await api.get('/api/kho/prices/status') as Map;
+    }
+    if (context.mounted) {
+      toast(context,
+          'Đã cập nhật giá ${r['done']} linh kiện${(r['errors'] as num) > 0 ? ' · ${r['errors']} lỗi: ${r['last_error']}' : ''}');
+    }
+  } catch (e) {
+    if (context.mounted) toast(context, 'Lỗi: $e');
+  }
+}
+
 bool isLow(Map p) => p['low'] == true || (p['qty'] as num? ?? 0) <= 0;
 
 Widget supChips(BuildContext context, List? sups) => Wrap(spacing: 4, runSpacing: 4, children: [
@@ -222,6 +261,14 @@ class _KhoScreenState extends State<KhoScreen> {
                   }),
               const SizedBox(width: 8),
               ActionChip(
+                  avatar: const Icon(Icons.attach_money, size: 18),
+                  label: const Text('Cập nhật giá'),
+                  onPressed: () async {
+                    await refreshAllPrices(context);
+                    _reload();
+                  }),
+              const SizedBox(width: 8),
+              ActionChip(
                   avatar: const Icon(Icons.add, size: 18),
                   label: const Text('Thêm tay'),
                   onPressed: () => _open(const PartEditScreen())),
@@ -294,6 +341,7 @@ class _KhoScreenState extends State<KhoScreen> {
                                   style: t.textTheme.titleLarge?.copyWith(
                                       fontWeight: FontWeight.w600, color: isLow(p) ? t.colorScheme.error : null)),
                               if (p['low'] == true) Text('sắp hết', style: TextStyle(fontSize: 11, color: t.colorScheme.error)),
+                              if (listPrice(p) case final pr?) Text(pr, style: t.textTheme.bodySmall),
                             ]),
                             onTap: () => _open(PartScreen(id: p['id'] as int)),
                           );
@@ -524,6 +572,8 @@ class _PartScreenState extends State<PartScreen> {
                   const SizedBox(height: 4),
                   supChips(context, p['suppliers'] as List),
                 ],
+                const SizedBox(height: 12),
+                PricesCard(key: ValueKey('prices-${p['id']}-${p['qty']}'), id: p['id'] as int, qty: (p['qty'] as num).toInt()),
                 if ((p['boms'] as List).isNotEmpty) ...[
                   const SizedBox(height: 12),
                   Text('Dùng trong BOM', style: t.textTheme.labelMedium),
@@ -1280,6 +1330,146 @@ class KhoCustomerHome extends StatelessWidget {
         ],
       ),
       body: const KhoScreen(),
+    );
+  }
+}
+
+
+// ============================================================ giá LCSC / Digi-Key
+/// Giá của linh kiện ở từng nhà cung cấp, theo bậc số lượng (/api/kho/prices, đệm 24 giờ trên board).
+class PricesCard extends StatefulWidget {
+  const PricesCard({super.key, required this.id, required this.qty});
+  final int id;
+  final int qty;
+
+  @override
+  State<PricesCard> createState() => _PricesCardState();
+}
+
+class _PricesCardState extends State<PricesCard> {
+  Map? _r;
+  Object? _err;
+  bool _busy = false;
+
+  Api get api => ApiScope.read(context);
+
+  @override
+  void initState() {
+    super.initState();
+    _load(false);
+  }
+
+  Future<void> _load(bool refresh) async {
+    setState(() => _busy = true);
+    try {
+      final r = await api.get('/api/kho/prices?id=${widget.id}${refresh ? '&refresh=1' : ''}',
+          timeout: const Duration(seconds: 60)) as Map;
+      if (mounted) {
+        setState(() {
+          _r = r;
+          _err = null;
+        });
+      }
+    } catch (e) {
+      if (mounted) setState(() => _err = e);
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
+  num _unitAt(List tiers, int qty) {
+    num unit = tiers.first[1] as num;
+    for (final tier in tiers) {
+      if (qty >= (tier[0] as num)) unit = tier[1] as num;
+    }
+    return unit;
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final t = Theme.of(context);
+    final prices = ((_r?['prices'] as List?) ?? const []).cast<Map>();
+    final ok = prices.where((x) => x['unit'] != null).toList();
+    final best = ok.isEmpty ? null : ok.map((x) => x['unit'] as num).reduce((a, b) => a < b ? a : b);
+    final dk = _r?['digikey_configured'] == true;
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(12, 4, 4, 12),
+        child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          Row(children: [
+            Expanded(child: Text('Giá nhà cung cấp (USD)', style: t.textTheme.titleSmall)),
+            if (api.isAdmin)
+              IconButton(
+                  tooltip: 'Tra lại giá',
+                  onPressed: _busy ? null : () => _load(true),
+                  icon: _busy
+                      ? const SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2))
+                      : const Icon(Icons.refresh)),
+          ]),
+          if (_err != null) Text('Không tra được giá: $_err', style: t.textTheme.bodySmall),
+          if (_r == null && _err == null) const LinearProgressIndicator(),
+          if (_r != null && prices.isEmpty)
+            Text(
+                'Chưa có mã LCSC${dk ? '' : ' / Digi-Key'} để tra giá.'
+                '${dk ? '' : ' (Khóa Digi-Key nhập ở trang web /kho → Nhập hàng.)'}',
+                style: t.textTheme.bodySmall),
+          for (final x in prices) ...[
+            const SizedBox(height: 8),
+            Row(children: [
+              Text('${supNames[x['supplier']] ?? x['supplier']}', style: const TextStyle(fontWeight: FontWeight.w600)),
+              const SizedBox(width: 6),
+              Expanded(
+                child: InkWell(
+                  onTap: () {
+                    final u = '${x['url'] ?? x['sku'] ?? x['key']}';
+                    Clipboard.setData(ClipboardData(text: u));
+                    toast(context, 'Đã sao chép: $u');
+                  },
+                  child: Text('${x['sku'] ?? x['key']}', style: t.textTheme.bodySmall, overflow: TextOverflow.ellipsis),
+                ),
+              ),
+              if (x['unit'] != null)
+                Padding(
+                  padding: const EdgeInsets.only(right: 8),
+                  child: Text('${fmtUsd(x['unit'] as num)}/con',
+                      style: TextStyle(
+                          fontWeight: FontWeight.w600, color: x['unit'] == best ? Colors.green.shade700 : null)),
+                ),
+            ]),
+            if (x['error'] != null)
+              Text('⚠️ ${x['error']}', style: t.textTheme.bodySmall)
+            else ...[
+              Text(
+                  'Còn ${x['stock'] ?? '?'} · mua tối thiểu ${x['moq'] ?? 1}'
+                  '${'${x['package'] ?? ''}'.isNotEmpty ? ' · ${x['package']}' : ''} · ${fmtTime(x['ts'] as num)}',
+                  style: t.textTheme.bodySmall),
+              SingleChildScrollView(
+                scrollDirection: Axis.horizontal,
+                child: DataTable(
+                  headingRowHeight: 28,
+                  dataRowMinHeight: 26,
+                  dataRowMaxHeight: 28,
+                  horizontalMargin: 0,
+                  columnSpacing: 16,
+                  columns: [
+                    const DataColumn(label: Text('Từ')),
+                    for (final tier in (x['tiers'] as List)) DataColumn(numeric: true, label: Text('${tier[0]}')),
+                  ],
+                  rows: [
+                    DataRow(cells: [
+                      const DataCell(Text('Giá')),
+                      for (final tier in (x['tiers'] as List)) DataCell(Text(fmtUsd(tier[1] as num))),
+                    ]),
+                  ],
+                ),
+              ),
+              if (widget.qty > 0 && (x['tiers'] as List).isNotEmpty)
+                Text('Giá trị ${widget.qty} con đang có ≈ ${fmtUsd(_unitAt(x['tiers'] as List, widget.qty) * widget.qty)}',
+                    style: t.textTheme.bodySmall),
+            ],
+          ],
+        ]),
+      ),
     );
   }
 }

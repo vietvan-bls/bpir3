@@ -68,6 +68,11 @@
   .sup { display: inline-block; font-size: .7rem; padding: 1px 6px; border-radius: 4px; margin: 2px 3px 0 0;
          background: var(--bg); border: 1px solid var(--line); color: var(--muted); text-decoration: none; }
   .sup b { color: var(--text); font-weight: 600; }
+  .price { font-variant-numeric: tabular-nums; } .price small { color: var(--muted); font-size: .68rem; margin-left: 2px; }
+  .ptab { width: 100%; border-collapse: collapse; font-size: .82rem; margin-top: 4px; }
+  .ptab td, .ptab th { padding: 3px 6px; border-bottom: 1px solid var(--line, #eee); }
+  .pcard { border: 1px solid var(--line, #e5e7eb); border-radius: 10px; padding: 8px 10px; margin-top: 8px; }
+  .pcard .best { color: var(--ok); font-weight: 600; }
   .empty { text-align: center; padding: 28px 12px; color: var(--muted); }
   dialog { border: 1px solid var(--line); border-radius: 14px; background: var(--card); color: var(--text);
            padding: 18px; width: min(640px, calc(100% - 24px)); max-height: calc(100% - 24px); }
@@ -148,17 +153,19 @@
         <option value="updated">Mới sửa</option><option value="mpn">MPN</option><option value="category">Loại / giá trị</option>
         <option value="location">Vị trí</option><option value="qty">Số lượng ít trước</option>
       </select>
+      <button class="admin-only" id="btnPrices" onclick="refreshPrices()" title="Tra giá LCSC / Digi-Key cho mọi linh kiện">💲 Cập nhật giá</button>
       <button class="primary admin-only" onclick="editPart()">+ Thêm</button>
     </div>
     <div class="card table-wrap">
       <table>
-        <thead><tr><th>Linh kiện</th><th class="hide-m">Loại · Package</th><th class="hide-m">Vị trí</th><th>Mua ở</th><th class="num">SL</th></tr></thead>
+        <thead><tr><th>Linh kiện</th><th class="hide-m">Loại · Package</th><th class="hide-m">Vị trí</th><th>Mua ở</th><th class="num" title="Đơn giá thị trường rẻ nhất (LCSC / Digi-Key, bậc số lượng nhỏ nhất)">Giá</th><th class="num">SL</th></tr></thead>
         <tbody id="parts"></tbody>
       </table>
       <div class="row" style="margin-top:10px"><span class="label" id="pageInfo"></span><span class="spacer"></span>
         <button class="small" id="btnMore" onclick="loadParts(true)">Xem thêm</button></div>
     </div>
-    <p class="note"><a id="expLink" href="/api/kho/export.csv">⬇ Xuất kho ra CSV</a> (mở được bằng Excel) · Dữ liệu tự sao lưu mỗi ngày trên thẻ nhớ.</p>
+    <p class="note"><a id="expLink" href="/api/kho/export.csv">⬇ Xuất kho ra CSV</a> (mở được bằng Excel) · Dữ liệu tự sao lưu mỗi ngày trên thẻ nhớ.
+      Giá: đơn giá thị trường rẻ nhất tra từ LCSC / Digi-Key (USD, bậc số lượng nhỏ nhất), lưu 24 giờ.</p>
   </section>
 
   <!-- ===================== BOM ===================== -->
@@ -214,6 +221,20 @@
         <label style="color:var(--accent);cursor:pointer;text-decoration:underline">chọn file<input type="file" hidden accept=".csv,.tsv,.txt,.xlsx" onchange="pickFile(this.files[0], 'stock')"></label>
         <div class="note">File đơn hàng xuất từ LCSC, Digi-Key, Mouser (CSV / XLSX), hoặc bảng tự làm (Taobao…) có cột Số lượng + MPN / mã.
           Linh kiện đã có thì cộng số lượng và thêm mã nhà cung cấp; chưa có thì tạo mới.</div></div>
+    </div>
+    <div class="card section">
+      <h2>Giá Digi-Key (khóa API)</h2>
+      <div class="note" id="dkState">…</div>
+      <div class="row" style="margin-top:8px">
+        <input id="dkId" class="inp" style="flex:1 1 200px" placeholder="Client ID" autocomplete="off">
+        <input id="dkSecret" class="inp" style="flex:1 1 200px" type="password" placeholder="Client Secret" autocomplete="new-password">
+        <button onclick="saveDigikey()">Lưu</button>
+        <button class="small" onclick="saveDigikey(true)">Xóa khóa</button>
+      </div>
+      <div class="note">Digi-Key không cho tra giá tự do. Tạo khóa miễn phí: <a href="https://developer.digikey.com" target="_blank" rel="noopener">developer.digikey.com</a>
+        → đăng nhập → <b>Organizations</b> → tạo organization → <b>Production Apps</b> → <b>Create App</b>, tick
+        <b>ProductInformation V4</b> → mở app → chép <b>Client ID</b> và <b>Client Secret</b> vào đây. Khóa chỉ lưu trên board, không hiện lại.
+        Có khóa thì linh kiện chưa có mã Digi-Key cũng được tra theo MPN. LCSC không cần khóa (tra theo mã C…).</div>
     </div>
     <div class="card">
       <h2>Mẹo</h2>
@@ -274,6 +295,7 @@
   </div>
   <div id="dpInfo" class="grid2" style="margin-top:14px"></div>
   <div id="dpSups" style="margin-top:10px"></div>
+  <div id="dpPrices" style="margin-top:10px"></div>
   <div id="dpBoms" class="note"></div>
   <h2 style="margin-top:14px">Lịch sử</h2>
   <div class="table-wrap" style="max-height:220px;overflow-y:auto"><table><tbody id="dpLog"></tbody></table></div>
@@ -406,6 +428,13 @@ function supTags(list) {
   return (list || []).map(s => { const u = supUrl(s);
     return `<a class="sup" ${u ? `href="${esc(u)}" target="_blank" rel="noopener"` : ""} onclick="event.stopPropagation()">${SUP[s.supplier] || s.supplier}${s.sku ? " <b>" + esc(s.sku) + "</b>" : ""}</a>`; }).join("");
 }
+const fmtUsd = (v) => v == null ? "" : "$" + (v >= 1 ? v.toFixed(2) : v >= 0.01 ? v.toFixed(4).replace(/0+$/, "").replace(/\.$/, "")
+                                                  : v.toPrecision(2));
+function priceTag(p) {
+  const m = p.market, v = m ? m.unit : p.price;
+  if (v == null) return '<span class="sub">–</span>';
+  return `<span class="price" title="${m ? (SUP[m.supplier] || m.supplier) + " · " + fmtT(m.ts) : "Giá nhập"}">${fmtUsd(v)}<small>${m ? (m.supplier === "lcsc" ? "LC" : "DK") : "nhập"}</small></span>`;
+}
 function partTitle(p) { return p.mpn || p.value || p.name || "(không tên)"; }
 function partSub(p) { return [p.mpn && p.value ? p.value : "", p.manufacturer, p.name].filter(Boolean).join(" · "); }
 const fmtT = (t) => new Date(t * 1000).toLocaleString("vi-VN", {hour12: false, day: "2-digit", month: "2-digit", year: "2-digit", hour: "2-digit", minute: "2-digit"});
@@ -434,6 +463,7 @@ function partRow(p, extra) {
     <td><div class="mpn">${esc(partTitle(p))}${isAdmin() && ownerSel === "all" && p.owner_id ? `<span class="owner-tag">${esc(p.owner_name)}</span>` : ""}</div><div class="sub">${esc(partSub(p))}</div></td>
     ${extra === "low" ? "" : `<td class="hide-m">${esc(p.category)}${p.category && p.package ? " · " : ""}${esc(p.package)}</td>`}
     <td class="hide-m">${esc(p.location)}</td><td>${supTags(p.suppliers)}</td>
+    ${extra === "low" ? "" : `<td class="num">${priceTag(p)}</td>`}
     <td class="num"><span class="qty ${p.low || p.qty <= 0 ? "low" : ""}">${p.qty.toLocaleString("vi-VN")}</span>${extra === "low" ? "" : p.low ? '<div class="sub">sắp hết</div>' : ""}</td>
     ${extra === "low" ? `<td class="num">${p.min_qty}</td>` : ""}</tr>`;
 }
@@ -509,7 +539,7 @@ $("scanIn").addEventListener("keydown", e => { if (e.key === "Enter") { e.preven
 let curPart = null;
 async function openPart(id) {
   try { curPart = await api("/api/kho/part?id=" + id); } catch (e) { return toast("Lỗi: " + e.message); }
-  renderPart(); if (!dlgPart.open) dlgPart.showModal();
+  renderPart(); loadPrices(false); if (!dlgPart.open) dlgPart.showModal();
 }
 function renderPart() {
   const p = curPart;
@@ -529,6 +559,53 @@ function renderPart() {
   $("dpLog").innerHTML = p.log.length ? p.log.map(l => `<tr><td class="sub" style="white-space:nowrap">${fmtT(l.ts)}</td>
     <td class="num" style="color:${l.delta > 0 ? "var(--ok)" : "var(--bad)"}">${l.delta > 0 ? "+" : ""}${l.delta}</td>
     <td class="num">${l.qty_after}</td><td>${esc(l.reason)}</td></tr>`).join("") : '<tr><td class="sub">Chưa có</td></tr>';
+}
+async function loadPrices(refresh) {
+  const id = curPart.id; $("dpPrices").innerHTML = '<div class="note">Đang tra giá…</div>';
+  let r; try { r = await api(`/api/kho/prices?id=${id}${refresh ? "&refresh=1" : ""}`); }
+  catch (e) { $("dpPrices").innerHTML = `<div class="note">Không tra được giá: ${esc(e.message)}</div>`; return; }
+  if (!curPart || curPart.id !== id) return;
+  const qty = Math.max(curPart.qty, 1), list = r.prices.filter(x => x.tiers && x.tiers.length);
+  const best = list.length ? Math.min(...list.map(x => x.unit)) : null;
+  const cards = r.prices.map(x => {
+    const name = SUP[x.supplier] || x.supplier;
+    if (x.error) return `<div class="pcard"><b>${name}</b> <span class="sub">${esc(x.key)}</span><div class="note">⚠️ ${esc(x.error)}</div></div>`;
+    const atQty = x.tiers.reduce((a, [q, pr]) => qty >= q ? pr : a, x.tiers[0][1]);
+    return `<div class="pcard"><div class="row" style="gap:6px;align-items:baseline">
+        <b>${name}</b> <a class="sub" href="${esc(x.url)}" target="_blank" rel="noopener">${esc(x.sku)}</a><span class="spacer"></span>
+        <span class="${x.unit === best ? "best" : ""}">${fmtUsd(x.unit)}/con</span></div>
+      <div class="sub">Còn ${x.stock != null ? (+x.stock).toLocaleString("vi-VN") : "?"} · mua tối thiểu ${x.moq || 1}${x.package ? " · " + esc(x.package) : ""}
+        · cập nhật ${fmtT(x.ts)}</div>
+      <table class="ptab"><tr><th style="text-align:left">Mua từ</th>${x.tiers.map(([q]) => `<td class="num">${q.toLocaleString("vi-VN")}</td>`).join("")}</tr>
+        <tr><th style="text-align:left">Đơn giá</th>${x.tiers.map(([, pr]) => `<td class="num">${fmtUsd(pr)}</td>`).join("")}</tr></table>
+      <div class="sub">Giá trị ${curPart.qty.toLocaleString("vi-VN")} con đang có ≈ <b>${fmtUsd(atQty * curPart.qty)}</b></div></div>`; }).join("");
+  $("dpPrices").innerHTML = `<div class="row"><div class="label">Giá nhà cung cấp (USD)</div><span class="spacer"></span>
+      <button class="small admin-only" onclick="loadPrices(true)">↻ Tra lại giá</button></div>`
+    + (cards || `<div class="note">Chưa có mã LCSC${r.digikey_configured ? "" : " / Digi-Key"} để tra giá.${r.digikey_configured ? "" : " Thêm khóa Digi-Key ở tab Nhập hàng để tra theo MPN."}</div>`);
+  if (refresh) refreshAll();
+}
+let priceTimer = null;
+async function refreshPrices() {
+  let r; try { r = await api("/api/kho/prices/refresh-all", {owner: isAdmin() ? ownerSel : "all"}); } catch (e) { return toast("Lỗi: " + e.message); }
+  if (!r.total) return toast("Không có linh kiện nào có mã LCSC / Digi-Key");
+  const tick = async () => {
+    try { r = await api("/api/kho/prices/status"); } catch { return; }
+    $("btnPrices").textContent = r.running ? `💲 ${r.done}/${r.total}…` : "💲 Cập nhật giá";
+    if (r.running) { priceTimer = setTimeout(tick, 1500); return; }
+    refreshAll(); toast(`Đã cập nhật giá ${r.done} linh kiện` + (r.errors ? ` · ${r.errors} lỗi: ${r.last_error}` : ""));
+  };
+  clearTimeout(priceTimer); tick();
+}
+async function loadDigikey() {
+  try { const r = await api("/api/kho/digikey");
+    $("dkState").innerHTML = r.configured ? "✅ Đã có khóa Digi-Key trên board." : "Chưa có khóa: chỉ tra được giá LCSC."; } catch {}
+}
+async function saveDigikey(clear) {
+  const body = clear ? {client_id: "", client_secret: ""} : {client_id: $("dkId").value.trim(), client_secret: $("dkSecret").value.trim()};
+  if (clear && !confirm("Xóa khóa Digi-Key khỏi board?")) return;
+  try { await api("/api/kho/digikey", body); $("dkId").value = $("dkSecret").value = ""; toast(clear ? "Đã xóa khóa" : "Khóa Digi-Key dùng được ✅"); }
+  catch (e) { toast("Lỗi: " + e.message); }
+  loadDigikey();
 }
 async function lcscFill() {
   try { curPart = await api("/api/kho/part/lcsc-fill", {id: curPart.id}); renderPart(); refreshAll(); toast("Đã cập nhật từ LCSC"); }
@@ -803,6 +880,7 @@ function showTab(name) {
   if (name === "bom" && !curBom) loadBoms();
   if (name === "low") loadLow();
   if (name === "customers") loadCustomers();
+  if (name === "import") loadDigikey();
 }
 document.querySelectorAll("#tabs button").forEach(b => b.addEventListener("click", () => showTab(b.dataset.tab)));
 $("ownerSel").addEventListener("change", () => { ownerSel = $("ownerSel").value; curBom = null; $("bomView").style.display = "none"; $("bomList").style.display = "";

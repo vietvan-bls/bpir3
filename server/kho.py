@@ -20,6 +20,8 @@ import secrets
 import sqlite3
 import threading
 import time
+import urllib.error
+import urllib.parse
 import urllib.request
 import xml.etree.ElementTree as ET
 import zipfile
@@ -268,6 +270,9 @@ CREATE TABLE IF NOT EXISTS bom_lines (
 CREATE INDEX IF NOT EXISTS bl_bom ON bom_lines (bom_id);
 CREATE TABLE IF NOT EXISTS scanned_labels (label_id TEXT PRIMARY KEY, part_id INTEGER, ts REAL, qty INTEGER, raw TEXT);
 CREATE TABLE IF NOT EXISTS lcsc_cache (code TEXT PRIMARY KEY, ts REAL, data TEXT);
+CREATE TABLE IF NOT EXISTS price_cache (supplier TEXT, key TEXT, ts REAL, data TEXT, PRIMARY KEY (supplier, key));
+CREATE TABLE IF NOT EXISTS part_price (part_id INTEGER PRIMARY KEY REFERENCES parts(id) ON DELETE CASCADE,
+  unit REAL, supplier TEXT, ts REAL);
 CREATE TABLE IF NOT EXISTS customers (id INTEGER PRIMARY KEY, name TEXT NOT NULL, phone TEXT DEFAULT '',
   note TEXT DEFAULT '', created REAL);
 CREATE TABLE IF NOT EXISTS kho_users (id INTEGER PRIMARY KEY, username TEXT UNIQUE NOT NULL COLLATE NOCASE,
@@ -373,6 +378,13 @@ class Kho:
             out.setdefault(r["part_id"], []).append(r)
         return out
 
+    def _market_of(self, ids):
+        """Giá thị trường rẻ nhất đã tra (đơn giá ở bậc số lượng nhỏ nhất) của từng linh kiện."""
+        if not ids:
+            return {}
+        return {r["part_id"]: {"unit": r["unit"], "supplier": r["supplier"], "ts": r["ts"]} for r in self._q(
+            f"SELECT * FROM part_price WHERE part_id IN ({','.join('?' * len(ids))})", ids)}
+
     def list_parts(self, q="", category="", location="", low=False, limit=200, offset=0, sort="updated", owner=None):
         """owner: None = mọi chủ sở hữu (quản lý), 0 = của mình, >0 = của khách đó."""
         where, args = [], []
@@ -400,8 +412,10 @@ class Kho:
                         f"ORDER BY {order} LIMIT ? OFFSET ?",
                         args + [max(1, min(int(limit), 1000)), max(0, int(offset))])
         sup = self._suppliers_of([p["id"] for p in items])
+        mk = self._market_of([p["id"] for p in items])
         for p in items:
             p["suppliers"] = sup.get(p["id"], [])
+            p["market"] = mk.get(p["id"])
             p["low"] = p["min_qty"] > 0 and p["qty"] <= p["min_qty"]
         return {"items": items, "total": total}
 
@@ -412,6 +426,7 @@ class Kho:
             raise ValueError("Không có linh kiện này")
         p = rows[0]
         p["suppliers"] = self._suppliers_of([pid]).get(pid, [])
+        p["market"] = self._market_of([pid]).get(pid)
         p["low"] = p["min_qty"] > 0 and p["qty"] <= p["min_qty"]
         p["log"] = self._q("SELECT * FROM stock_log WHERE part_id = ? ORDER BY ts DESC LIMIT 50", (pid,))
         p["boms"] = self._q("SELECT DISTINCT b.id, b.name, l.qty FROM bom_lines l JOIN boms b ON b.id = l.bom_id "
@@ -458,6 +473,7 @@ class Kho:
                 # SQLite có thể dùng lại id của linh kiện đã xóa: dọn dữ liệu sót (nếu có) để không lẫn sang người khác
                 self.db.execute("DELETE FROM stock_log WHERE part_id = ?", (pid,))
                 self.db.execute("DELETE FROM part_suppliers WHERE part_id = ?", (pid,))
+                self.db.execute("DELETE FROM part_price WHERE part_id = ?", (pid,))
                 self.db.execute("UPDATE bom_lines SET part_id = NULL, match = '' WHERE part_id = ?", (pid,))
                 if vals["qty"]:
                     self._log(pid, vals["qty"], vals["qty"], d.get("reason") or "Tạo mới")
@@ -479,6 +495,7 @@ class Kho:
         with self.lock:
             self._backup()
             self.db.execute("DELETE FROM parts WHERE id = ?", (pid,))
+            self.db.execute("DELETE FROM part_price WHERE part_id = ?", (pid,))
             self.db.commit()
 
     def _log(self, pid, delta, after, reason, ref=""):
@@ -505,7 +522,8 @@ class Kho:
     def meta(self, owner=None):
         w, a = ("WHERE owner_id = ?", (int(owner),)) if owner is not None else ("", ())
         aw = (w + " AND" if w else "WHERE")
-        cnt = self._q("SELECT COUNT(*) n, COALESCE(SUM(qty),0) pcs, COALESCE(SUM(qty * COALESCE(price,0)),0) value, "
+        cnt = self._q("SELECT COUNT(*) n, COALESCE(SUM(qty),0) pcs, "
+                      "COALESCE(SUM(qty * COALESCE(price, (SELECT unit FROM part_price pp WHERE pp.part_id = parts.id), 0)),0) value, "
                       "COALESCE(SUM(CASE WHEN min_qty > 0 AND qty <= min_qty THEN 1 ELSE 0 END),0) low, "
                       f"COALESCE(SUM(CASE WHEN qty <= 0 THEN 1 ELSE 0 END),0) out FROM parts {w}", a)[0]
         return {**cnt,
@@ -952,6 +970,210 @@ Kho.scan = scan
 Kho.scan_apply = scan_apply
 Kho.fill_from_lcsc = fill_from_lcsc
 
+
+# ------------------------------------------------------------------ giá theo nhà cung cấp (LCSC, Digi-Key)
+PRICE_CACHE_HOURS = 24
+DIGIKEY_CONF = os.environ.get("KHO_DIGIKEY_CONF", "/etc/bpi-digikey.json")   # {"client_id", "client_secret"} — chỉ trên board
+DIGIKEY_API = "https://api.digikey.com"
+_dk_token = {"value": "", "exp": 0}
+_dk_lock = threading.Lock()
+
+
+def _http_json(url, data=None, headers=None, timeout=15):
+    req = urllib.request.Request(url, data=data, headers={"User-Agent": "Mozilla/5.0", "Accept": "application/json",
+                                                          **(headers or {})})
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            return json.loads(resp.read().decode("utf-8", "replace"))
+    except urllib.error.HTTPError as e:
+        body = e.read().decode("utf-8", "replace")[:300]
+        try:
+            j = json.loads(body)
+            body = j.get("detail") or j.get("title") or j.get("ErrorMessage") or j.get("error_description") or body
+        except ValueError:
+            pass
+        raise OSError(f"HTTP {e.code}: {body}") from None
+
+
+def _price_lcsc(code):
+    j = _http_json(LCSC_API.format(urllib.parse.quote(code)))
+    r = j.get("result") if isinstance(j, dict) else None
+    if not r:
+        raise ValueError(f"LCSC không có mã {code}")
+    tiers = [[int(t.get("ladder") or 1), float(t.get("usdPrice") or t.get("currencyPrice") or 0)]
+             for t in (r.get("productPriceList") or []) if t.get("usdPrice") or t.get("currencyPrice")]
+    return {"tiers": sorted(tiers), "currency": "USD", "stock": r.get("stockNumber"), "moq": r.get("minBuyNumber"),
+            "mult": r.get("minPacketNumber") if r.get("minPacketUnit") != "Reel" else None,
+            "sku": code, "mpn": r.get("productModel") or "",
+            "url": f"https://www.lcsc.com/product-detail/{urllib.parse.quote(code)}.html"}
+
+
+def digikey_conf():
+    try:
+        with open(DIGIKEY_CONF, encoding="utf-8") as f:
+            c = json.load(f)
+        return c if c.get("client_id") and c.get("client_secret") else None
+    except (OSError, ValueError):
+        return None
+
+
+def digikey_save_conf(client_id, client_secret):
+    client_id, client_secret = str(client_id or "").strip(), str(client_secret or "").strip()
+    if not client_id and not client_secret:   # xóa khóa
+        try:
+            os.remove(DIGIKEY_CONF)
+        except OSError:
+            pass
+        return {"configured": False}
+    if not client_id or not client_secret:
+        raise ValueError("Cần cả Client ID và Client Secret")
+    tmp = DIGIKEY_CONF + ".tmp"
+    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, "w", encoding="utf-8") as f:
+        json.dump({"client_id": client_id, "client_secret": client_secret}, f)
+    os.replace(tmp, DIGIKEY_CONF)
+    with _dk_lock:
+        _dk_token.update(value="", exp=0)
+    try:
+        _dk_access_token()   # thử luôn: sai khóa thì báo ngay và không lưu
+    except Exception:
+        os.remove(DIGIKEY_CONF)
+        raise
+    return {"configured": True}
+
+
+def _dk_access_token():
+    c = digikey_conf()
+    if not c:
+        raise ValueError("Chưa nhập khóa API Digi-Key (Client ID / Secret)")
+    with _dk_lock:
+        if _dk_token["value"] and _dk_token["exp"] > time.time() + 60:
+            return c, _dk_token["value"]
+        body = urllib.parse.urlencode({"client_id": c["client_id"], "client_secret": c["client_secret"],
+                                       "grant_type": "client_credentials"}).encode()
+        j = _http_json(DIGIKEY_API + "/v1/oauth2/token", body, {"Content-Type": "application/x-www-form-urlencoded"})
+        _dk_token.update(value=j["access_token"], exp=time.time() + int(j.get("expires_in", 600)))
+        return c, _dk_token["value"]
+
+
+def _price_digikey(key):
+    """key: mã Digi-Key (296-1234-1-ND) hoặc MPN. API Product Information v4."""
+    c, tok = _dk_access_token()
+    j = _http_json(f"{DIGIKEY_API}/products/v4/search/{urllib.parse.quote(key, safe='')}/productdetails", headers={
+        "X-DIGIKEY-Client-Id": c["client_id"], "Authorization": "Bearer " + tok,
+        "X-DIGIKEY-Locale-Site": "US", "X-DIGIKEY-Locale-Language": "en", "X-DIGIKEY-Locale-Currency": "USD"})
+    p = j.get("Product") or {}
+    if not p:
+        raise ValueError(f"Digi-Key không có {key}")
+    vs = [v for v in (p.get("ProductVariations") or []) if v.get("StandardPricing")]
+    want = key.upper()
+    v = next((v for v in vs if (v.get("DigiKeyProductNumber") or "").upper() == want), None) or \
+        min(vs, key=lambda v: (v.get("MinimumOrderQuantity") or 1, -(v.get("QuantityAvailableforPackageType") or 0)), default=None)
+    if not v:
+        raise ValueError(f"Digi-Key không có giá cho {key}")
+    tiers = sorted([int(t["BreakQuantity"]), float(t["UnitPrice"])] for t in v["StandardPricing"] if t.get("UnitPrice"))
+    return {"tiers": tiers, "currency": "USD", "stock": p.get("QuantityAvailable"),
+            "moq": v.get("MinimumOrderQuantity"), "mult": None, "sku": v.get("DigiKeyProductNumber") or key,
+            "package": (v.get("PackageType") or {}).get("Name", ""),
+            "mpn": p.get("ManufacturerProductNumber") or "", "url": p.get("ProductUrl") or ""}
+
+
+PRICE_SOURCES = {"lcsc": _price_lcsc, "digikey": _price_digikey}
+
+
+def supplier_price(self, supplier, key, refresh=False):
+    key = str(key or "").strip()
+    if not refresh:
+        row = self._q("SELECT ts, data FROM price_cache WHERE supplier = ? AND key = ?", (supplier, key.upper()))
+        if row and time.time() - row[0]["ts"] < PRICE_CACHE_HOURS * 3600:
+            return {**json.loads(row[0]["data"]), "ts": row[0]["ts"]}
+    d = PRICE_SOURCES[supplier](key)
+    now = time.time()
+    with self.lock:
+        self.db.execute("INSERT OR REPLACE INTO price_cache VALUES (?, ?, ?, ?)", (supplier, key.upper(), now, json.dumps(d)))
+        self.db.commit()
+    return {**d, "ts": now}
+
+
+def price_at(tiers, qty):
+    """Đơn giá khi mua `qty` con (bậc lớn nhất ≤ qty; dưới bậc đầu thì lấy bậc đầu)."""
+    if not tiers:
+        return None
+    best = tiers[0][1]
+    for q, pr in tiers:
+        if qty >= q:
+            best = pr
+    return best
+
+
+def part_prices(self, pid, refresh=False, owner=None):
+    """Giá của linh kiện ở từng nhà cung cấp: LCSC theo mã C…, Digi-Key theo mã Digi-Key, hoặc theo MPN nếu có khóa API."""
+    p = self.get_part(pid, owner)
+    jobs = [(s["supplier"], s["sku"]) for s in p["suppliers"] if s["supplier"] in PRICE_SOURCES and s["sku"]]
+    if not any(j[0] == "digikey" for j in jobs) and p["mpn"] and digikey_conf():
+        jobs.append(("digikey", p["mpn"]))
+    out = []
+    for sup, key in dict.fromkeys(jobs):
+        try:
+            d = self.supplier_price(sup, key, refresh)
+            out.append({"supplier": sup, "key": key, **d, "unit": d["tiers"][0][1] if d["tiers"] else None})
+        except Exception as e:  # noqa: BLE001 - một nhà cung cấp lỗi thì vẫn hiện nhà khác
+            out.append({"supplier": sup, "key": key, "error": str(e)[:200]})
+    ok = [o for o in out if o.get("unit")]
+    with self.lock:
+        if ok:
+            b = min(ok, key=lambda o: o["unit"])
+            self.db.execute("INSERT OR REPLACE INTO part_price VALUES (?, ?, ?, ?)", (pid, b["unit"], b["supplier"], time.time()))
+        elif not any("error" in o for o in out):
+            self.db.execute("DELETE FROM part_price WHERE part_id = ?", (pid,))
+        self.db.commit()
+    return {"part_id": pid, "prices": out, "market": self._market_of([pid]).get(pid),
+            "digikey_configured": bool(digikey_conf())}
+
+
+_price_job = {"running": False, "done": 0, "total": 0, "errors": 0, "started": 0, "finished": 0, "last_error": ""}
+
+
+def refresh_all_prices(self, owner=None, force=False):
+    """Cập nhật giá mọi linh kiện có mã LCSC / Digi-Key (hoặc MPN khi có khóa Digi-Key), chạy nền."""
+    if _price_job["running"]:
+        return dict(_price_job)
+    w, a = ("WHERE p.owner_id = ?", [int(owner)]) if owner is not None else ("", [])
+    if digikey_conf():
+        ids = [r["id"] for r in self._q(f"SELECT p.id FROM parts p {w} ORDER BY p.id", a)]
+    else:
+        ids = [r["id"] for r in self._q(f"SELECT DISTINCT p.id FROM parts p JOIN part_suppliers s ON s.part_id = p.id "
+                                        f"AND s.supplier = 'lcsc' AND s.sku != '' {w} ORDER BY p.id", a)]
+    _price_job.update(running=True, done=0, total=len(ids), errors=0, started=time.time(), finished=0, last_error="")
+
+    def run():
+        try:
+            for pid in ids:
+                try:
+                    r = self.part_prices(pid, refresh=force)
+                    errs = [o["error"] for o in r["prices"] if "error" in o]
+                    if errs:
+                        _price_job["errors"] += 1
+                        _price_job["last_error"] = errs[0]
+                except Exception as e:  # noqa: BLE001
+                    _price_job["errors"] += 1
+                    _price_job["last_error"] = str(e)[:200]
+                _price_job["done"] += 1
+                time.sleep(0.4)   # nhẹ tay với API của nhà cung cấp
+        finally:
+            _price_job.update(running=False, finished=time.time())
+    threading.Thread(target=run, daemon=True).start()
+    return dict(_price_job)
+
+
+def price_job_status(self):
+    return {**_price_job, "digikey_configured": bool(digikey_conf())}
+
+
+Kho.supplier_price = supplier_price
+Kho.part_prices = part_prices
+Kho.refresh_all_prices = refresh_all_prices
+Kho.price_job_status = price_job_status
 
 # ------------------------------------------------------------------ khách + tài khoản khách
 PBKDF2_ITER, SESSION_DAYS, MAX_FAILS, LOCK_SECONDS = 200_000, 30, 5, 300

@@ -40,6 +40,7 @@ def paths(data):
         "IOT_AUTH_FILE": os.path.join(data, "iot-auth.json"),
         "IOT_MQTT_CONF": os.path.join(data, "mqtt.json"),
         "IOT_MOSQ_PASSWD": os.path.join(data, "mosquitto-passwd"),
+        "KHO_DIGIKEY_CONF": os.path.join(data, "digikey.json"),
     }
 
 

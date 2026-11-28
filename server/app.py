@@ -1229,8 +1229,14 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/api/kho/export.csv":
             return self._send(200, KHO.export_csv(scope), "text/csv", headers={
                 "Content-Disposition": f'attachment; filename="kho-{time.strftime("%Y%m%d")}.csv"'})
+        if path == "/api/kho/prices":            # giá LCSC / Digi-Key của 1 linh kiện (khách: chỉ giá đã lưu đệm)
+            return self._send(200, KHO.part_prices(int(g("id", "0") or 0), admin and g("refresh") == "1", mine))
         if not admin:
             raise PermissionError("Tài khoản khách chỉ được xem")
+        if path == "/api/kho/prices/status":
+            return self._send(200, KHO.price_job_status())
+        if path == "/api/kho/digikey":
+            return self._send(200, {"configured": bool(_kho.digikey_conf())})
         if path == "/api/kho/lcsc":
             return self._send(200, KHO.lcsc_info(g("code")))
         if path == "/api/kho/customers":
@@ -1267,6 +1273,11 @@ class Handler(BaseHTTPRequestHandler):
         # ---- chỉ quản lý
         if path == "/api/kho/part":
             return self._send(200, KHO.save_part(body))
+        if path == "/api/kho/prices/refresh-all":   # {owner?: "all"|0|id, force?: bool}
+            return self._send(200, KHO.refresh_all_prices(self.kho_owner_param(str(body.get("owner", "all"))),
+                                                          bool(body.get("force"))))
+        if path == "/api/kho/digikey":              # {client_id, client_secret} — lưu trên board, không bao giờ trả về
+            return self._send(200, _kho.digikey_save_conf(body.get("client_id"), body.get("client_secret")))
         if path == "/api/kho/scan":
             return self._send(200, KHO.scan(body.get("code", ""), owner=new_owner))
         if path == "/api/kho/scan/apply":

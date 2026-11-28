@@ -324,6 +324,18 @@ Mở: `http://192.168.2.1:8080/kho` / `https://bpi-r3.tail24dd60.ts.net/kho`, ho
 - Chỉ dùng thư viện chuẩn của Python (đọc `.xlsx` bằng `zipfile` + XML), không cần cài thêm gói.
 - API: xem đầu [server/app.py](server/app.py) (`/api/kho/*`).
 
+### Giá LCSC / Digi-Key
+
+- Cột **Giá** ở danh sách (web + app): đơn giá thị trường rẻ nhất ở bậc số lượng nhỏ nhất, kèm `LC`/`DK`. Chưa tra thì hiện giá nhập.
+- Trang chi tiết linh kiện: bảng giá theo bậc số lượng của từng nhà cung cấp, tồn kho bên đó, số mua tối thiểu, giá trị số đang có.
+  Quản lý bấm **↻ Tra lại giá**. Nút **💲 Cập nhật giá** (web) / chip **Cập nhật giá** (app) tra cả kho, chạy nền trên board.
+- LCSC: theo mã `C…` (API chi tiết sản phẩm của lcsc.com, không cần khóa). Digi-Key: API chính thức Product Information v4,
+  cần **Client ID / Secret** (miễn phí ở developer.digikey.com). Nhập trên web `/kho` → Nhập hàng; lưu ở `/etc/bpi-digikey.json`
+  (chmod 600, không bao giờ trả về trình duyệt). Có khóa thì linh kiện chưa có mã Digi-Key được tra theo MPN.
+- Đệm 24 giờ trong bảng `price_cache`. Giá rẻ nhất mỗi linh kiện ở `part_price`, dùng cho tổng **Giá trị** khi linh kiện chưa có giá nhập.
+- API: `GET /api/kho/prices?id=&refresh=1`, `POST /api/kho/prices/refresh-all {owner}`, `GET /api/kho/prices/status`,
+  `GET|POST /api/kho/digikey`. Khách chỉ xem giá đã đệm, không được tra mới.
+
 ## MQTT broker (IoT)
 
 Mosquitto chạy trên board, cổng **1883**, chỉ vào được từ mạng của board (Wi-Fi `BPI-R3`, `192.168.2.x`);
