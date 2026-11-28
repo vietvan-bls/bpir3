@@ -95,6 +95,9 @@ cp build/app/outputs/flutter-apk/app-arm64-v8a-release.apk ../out/app/bpir3-arm6
 - API tìm kiếm của LCSC (`/ftps/wm/search/global`) trả 403 → không tra được MPN → mã LCSC; chỉ API chi tiết theo mã C… dùng được.
 - GitHub chỉ cho clone repo công khai, **không tải được file Releases** của repo khác (oss-cad-suite) → FPGA dùng bản YoWASP từ PyPI;
   thư viện arm64 lấy `.deb` từ `ports.ubuntu.com`.
+- Gowin EDA (bản Standard) không kiểm tra được license từ container: proxy chỉ chở HTTPS. Người dùng bảo **bỏ qua Gowin EDA**,
+  chỉ dùng bộ mã nguồn mở. Tang Console 60K (GW5AT-60): nạp được, báo DONE, nhưng UART chưa thấy gì (Apicula chưa thử chip này trên phần cứng thật).
+  nextpnr có GW5AT-60B phải build từ source (`-DHIMBAECHEL_GOWIN_DEVICES="GW5AT-60B;GW1NS-4"`, cài vào `/opt/nextpnr`) + `apycula>=0.36`.
 - Tang Nano 4K: BL702 chỉ có JTAG, **không có UART** qua USB (đã dò cả 29 chân).
 - `apk search` có thể rỗng nếu chỉ mục cũ → `apk update` trước.
 
