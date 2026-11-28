@@ -112,7 +112,7 @@ cp build/app/outputs/flutter-apk/app-arm64-v8a-release.apk ../out/app/bpir3-arm6
   **Không bao giờ commit bản giải mã.** Bản đầu tiên: 2026-11-28.
 - `server/desktop.py` (chế độ máy tính `BPI_DESKTOP=1`, chỉ kho + IoT). Board đã deploy bản mới nhất (28/11: giá LCSC/Digi-Key).
 - Giá Digi-Key: chưa có khóa API (người dùng cần tạo ở developer.digikey.com, nhập trên web /kho → Nhập hàng). Code Digi-Key **chưa thử với khóa thật**.
-- App Android 1.6.0 (`out/app/bpir3-arm64.apk`): thêm giá LCSC/Digi-Key.
+- App Android 1.6.1 (`out/app/bpir3-arm64.apk`): giá hiện tại LCSC/Digi-Key.
 - Mật khẩu quản trị web panel đã từng lộ trong chat phiên trước → đã nhắc người dùng đổi (chưa rõ đã đổi chưa).
 
 ## 6. Việc dang dở / ý tưởng người dùng từng nhắc

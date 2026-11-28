@@ -327,7 +327,7 @@ Mở: `http://192.168.2.1:8080/kho` / `https://bpi-r3.tail24dd60.ts.net/kho`, ho
 ### Giá LCSC / Digi-Key
 
 - Cột **Giá** ở danh sách (web + app): đơn giá thị trường rẻ nhất ở bậc số lượng nhỏ nhất, kèm `LC`/`DK`. Chưa tra thì hiện giá nhập.
-- Trang chi tiết linh kiện: bảng giá theo bậc số lượng của từng nhà cung cấp, tồn kho bên đó, số mua tối thiểu, giá trị số đang có.
+- Trang chi tiết linh kiện: **Giá hiện tại** của từng nhà cung cấp, một dòng mỗi nơi (bảng bậc số lượng vẫn có trong API, không hiện ra).
   Quản lý bấm **↻ Tra lại giá**. Nút **💲 Cập nhật giá** (web) / chip **Cập nhật giá** (app) tra cả kho, chạy nền trên board.
 - LCSC: theo mã `C…` (API chi tiết sản phẩm của lcsc.com, không cần khóa). Digi-Key: API chính thức Product Information v4,
   cần **Client ID / Secret** (miễn phí ở developer.digikey.com). Nhập trên web `/kho` → Nhập hàng; lưu ở `/etc/bpi-digikey.json`

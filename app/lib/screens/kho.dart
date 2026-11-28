@@ -1377,13 +1377,6 @@ class _PricesCardState extends State<PricesCard> {
     }
   }
 
-  num _unitAt(List tiers, int qty) {
-    num unit = tiers.first[1] as num;
-    for (final tier in tiers) {
-      if (qty >= (tier[0] as num)) unit = tier[1] as num;
-    }
-    return unit;
-  }
 
   @override
   Widget build(BuildContext context) {
@@ -1397,7 +1390,7 @@ class _PricesCardState extends State<PricesCard> {
         padding: const EdgeInsets.fromLTRB(12, 4, 4, 12),
         child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
           Row(children: [
-            Expanded(child: Text('Giá nhà cung cấp (USD)', style: t.textTheme.titleSmall)),
+            Expanded(child: Text('Giá hiện tại', style: t.textTheme.titleSmall)),
             if (api.isAdmin)
               IconButton(
                   tooltip: 'Tra lại giá',
@@ -1414,7 +1407,7 @@ class _PricesCardState extends State<PricesCard> {
                 '${dk ? '' : ' (Khóa Digi-Key nhập ở trang web /kho → Nhập hàng.)'}',
                 style: t.textTheme.bodySmall),
           for (final x in prices) ...[
-            const SizedBox(height: 8),
+            const SizedBox(height: 6),
             Row(children: [
               Text('${supNames[x['supplier']] ?? x['supplier']}', style: const TextStyle(fontWeight: FontWeight.w600)),
               const SizedBox(width: 6),
@@ -1436,37 +1429,7 @@ class _PricesCardState extends State<PricesCard> {
                           fontWeight: FontWeight.w600, color: x['unit'] == best ? Colors.green.shade700 : null)),
                 ),
             ]),
-            if (x['error'] != null)
-              Text('⚠️ ${x['error']}', style: t.textTheme.bodySmall)
-            else ...[
-              Text(
-                  'Còn ${x['stock'] ?? '?'} · mua tối thiểu ${x['moq'] ?? 1}'
-                  '${'${x['package'] ?? ''}'.isNotEmpty ? ' · ${x['package']}' : ''} · ${fmtTime(x['ts'] as num)}',
-                  style: t.textTheme.bodySmall),
-              SingleChildScrollView(
-                scrollDirection: Axis.horizontal,
-                child: DataTable(
-                  headingRowHeight: 28,
-                  dataRowMinHeight: 26,
-                  dataRowMaxHeight: 28,
-                  horizontalMargin: 0,
-                  columnSpacing: 16,
-                  columns: [
-                    const DataColumn(label: Text('Từ')),
-                    for (final tier in (x['tiers'] as List)) DataColumn(numeric: true, label: Text('${tier[0]}')),
-                  ],
-                  rows: [
-                    DataRow(cells: [
-                      const DataCell(Text('Giá')),
-                      for (final tier in (x['tiers'] as List)) DataCell(Text(fmtUsd(tier[1] as num))),
-                    ]),
-                  ],
-                ),
-              ),
-              if (widget.qty > 0 && (x['tiers'] as List).isNotEmpty)
-                Text('Giá trị ${widget.qty} con đang có ≈ ${fmtUsd(_unitAt(x['tiers'] as List, widget.qty) * widget.qty)}',
-                    style: t.textTheme.bodySmall),
-            ],
+            if (x['error'] != null) Text('⚠️ ${x['error']}', style: t.textTheme.bodySmall),
           ],
         ]),
       ),
